@@ -46,26 +46,22 @@
   </style>
 
   <!--
-    🔐 최소 Firestore 규칙 예시 (Firebase 콘솔 > Firestore > 규칙):
+    🔐 Firestore 규칙(최소 권장, 콘솔에 Publish):
     rules_version = '2';
     service cloud.firestore {
       match /databases/{database}/documents {
         function signedIn() { return request.auth != null; }
-
         match /users/{uid} {
           allow read: if signedIn();
-          allow create: if signedIn() && request.auth.uid == uid;
-          allow update: if signedIn() && request.auth.uid == uid;
+          allow create, update: if signedIn() && request.auth.uid == uid;
         }
-
         match /progress/{uid} {
           allow read: if signedIn();
           allow create, update: if signedIn() && request.auth.uid == uid;
         }
-
         match /sharedData/{docId} {
           allow read: if true;
-          allow create, update, delete: if signedIn(); // 필요시 관리자 제한
+          allow create, update, delete: if signedIn();
         }
       }
     }
@@ -74,10 +70,15 @@
   <!-- Firebase SDK (ESM) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
-    import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
-    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+    import {
+      getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, writeBatch
+    } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+    import {
+      getAuth, onAuthStateChanged, signInWithEmailAndPassword,
+      createUserWithEmailAndPassword, signOut, updateProfile
+    } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
-    /* 🔑 Firebase 콘솔 값으로 교체하세요 */
+    /* 🔑 Firebase 콘솔 값으로 교체 가능 */
     const firebaseConfig = {
       apiKey: "AIzaSyB8uvt7bkZokVkHT7nO0QRaB9WpEe2g2C4",
       authDomain: "youth-worker.firebaseapp.com",
@@ -100,11 +101,13 @@
         colProgress: () => collection(db, "progress"),
         colUsers   : () => collection(db, "users")
       };
-      window.__fb_api = { getDoc, getDocs, setDoc, doc, deleteDoc, writeBatch,
-                          onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile };
+      window.__fb_api = {
+        getDoc, getDocs, setDoc, doc, deleteDoc, writeBatch,
+        onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile
+      };
       console.log('[firebase] initialized');
     }catch(e){
-      console.warn('[firebase] init failed -> fallback to local only', e);
+      console.warn('[firebase] init failed -> local fallback', e);
       window.__cloudReady = false;
     }
   </script>
@@ -147,6 +150,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button id="loginBtn" class="btn primary">로그인</button>
           <button id="signupBtn" class="btn">회원가입</button>
+          <button id="resetPwBtn" class="btn">비밀번호 재설정</button>
         </div>
         <div id="envErr" style="font-size:12px;color:#ffb3b3;min-height:18px"></div>
         <div id="rankList" style="margin-top:10px"></div>
@@ -235,6 +239,12 @@
     const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
+    function showError(msg){
+      const box = document.getElementById('envErr');
+      if(box){ box.textContent = msg; }
+      console.error('[APP]', msg);
+    }
+
     /* ================= 로컬 폴백 저장소 ================= */
     function lsGet(key, def){ try{ const v=localStorage.getItem(key); return v? JSON.parse(v): def; }catch{return def;} }
     function lsSet(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
@@ -258,20 +268,26 @@
 
     /* ================= Users 헬퍼 ================= */
     async function ensureUserProfile(user){
-      if(!window.__cloudReady || !user) return;
-      const { db } = window.__fb;
-      const { doc, getDoc, setDoc } = window.__fb_api;
-      const ref = doc(db, 'users', user.uid);
-      const snap = await getDoc(ref);
-      const role = ADMIN_EMAILS.has(user.email) ? 'admin' : 'user';
-      if(!snap.exists()){
-        await setDoc(ref, { uid:user.uid, email:user.email||'', displayName:user.displayName||user.email?.split('@')[0]||'사용자', role, createdAt: new Date().toISOString() });
-      }else{
-        const d = snap.data()||{};
-        if(d.role!==role || d.displayName!==(user.displayName||d.displayName)){
-          await setDoc(ref, { role, displayName:user.displayName||d.displayName }, { merge:true });
+      try{
+        if(!window.__cloudReady || !user) return;
+        const { db } = window.__fb;
+        const { doc, getDoc, setDoc } = window.__fb_api;
+        const ref = doc(db, 'users', user.uid);
+        const snap = await getDoc(ref);
+        const role = ADMIN_EMAILS.has(user.email) ? 'admin' : 'user';
+        if(!snap.exists()){
+          await setDoc(ref, {
+            uid:user.uid, email:user.email||'',
+            displayName:user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
+            role, createdAt: new Date().toISOString()
+          });
+        }else{
+          const d = snap.data()||{};
+          if(d.role!==role || d.displayName!==(user.displayName||d.displayName)){
+            await setDoc(ref, { role, displayName:user.displayName||d.displayName }, { merge:true });
+          }
         }
-      }
+      }catch(e){ console.warn('ensureUserProfile fail', e); }
     }
     async function loadUsersMap(){
       const map = new Map(); // uid -> {displayName, role}
@@ -558,61 +574,73 @@
       try{
         const email=(emailEl.value||'').trim();
         const pass=passEl.value||'';
-        if(!email||!pass){ alert('이메일과 비밀번호를 입력하세요.'); return; }
+        if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
         await signInWithEmailAndPassword(window.__fb.auth, email, pass);
         // onAuthStateChanged에서 후속 처리
       }catch(err){
-        console.error('[login] error', err);
-        alert('로그인 실패: ' + (err?.message||err));
+        const code = err?.code || '';
+        const map = {
+          'auth/invalid-credential':'자격 증명이 올바르지 않습니다(비밀번호 오류 또는 다른 로그인 방식).',
+          'auth/user-not-found':'계정을 찾을 수 없습니다. 먼저 회원가입을 해주세요.',
+          'auth/wrong-password':'비밀번호가 올바르지 않습니다.',
+          'auth/invalid-email':'이메일 형식이 올바르지 않습니다.',
+          'auth/network-request-failed':'네트워크 오류입니다.'
+        };
+        showError(map[code] || `로그인 실패: ${code || err?.message || err}`);
       }
     };
 
-document.getElementById('signupBtn').onclick = async ()=>{
-  try{
-    const email=(document.getElementById('email').value||'').trim();
-    const pass =(document.getElementById('password').value||'');
-    const disp =(document.getElementById('displayName').value||'').trim();
-    if(!email||!pass){ showError('이메일/비밀번호를 입력하세요.'); return; }
-
-    const { createUserWithEmailAndPassword, updateProfile } = window.__fb_api;
-    const cred = await createUserWithEmailAndPassword(window.__fb.auth, email, pass);
-    if(disp){ await updateProfile(cred.user, { displayName: disp }); }
-    await ensureUserProfile(cred.user); // 실패해도 로그인엔 영향 없게 try/catch 되어 있음
-    showError('회원가입 완료! 이제 로그인합니다.');
-  }catch(err){
-    const m = {
-      'auth/operation-not-allowed':'콘솔에서 Email/Password 제공자를 Enable 하세요.',
-      'auth/email-already-in-use':'이미 가입된 이메일입니다. “로그인” 또는 “비밀번호 재설정”을 사용하세요.',
-      'auth/invalid-email':'이메일 형식이 올바르지 않습니다.',
-      'auth/weak-password':'비밀번호가 너무 약합니다(최소 6자).',
-      'auth/network-request-failed':'네트워크 오류입니다. 인터넷/차단 설정 확인.',
-      'auth/unauthorized-domain':'현재 접속 도메인을 Authorized domains에 추가하세요.'
+    document.getElementById('signupBtn').onclick = async ()=>{
+      try{
+        const email=(emailEl.value||'').trim();
+        const pass=passEl.value||'';
+        const disp=(nameEl.value||'').trim();
+        if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
+        const { createUserWithEmailAndPassword, updateProfile } = window.__fb_api;
+        const cred = await createUserWithEmailAndPassword(window.__fb.auth, email, pass);
+        if(disp){ await updateProfile(cred.user, { displayName: disp }); }
+        await ensureUserProfile(cred.user);
+        showError('회원가입 완료! 이제 로그인합니다.');
+      }catch(err){
+        const code = err?.code || '';
+        const map = {
+          'auth/email-already-in-use':'이미 가입된 이메일입니다. 로그인 또는 비밀번호 재설정을 사용하세요.',
+          'auth/invalid-email':'이메일 형식이 올바르지 않습니다.',
+          'auth/weak-password':'비밀번호가 너무 약합니다(최소 6자).',
+          'auth/operation-not-allowed':'Email/Password 제공자가 비활성화되어 있습니다.',
+          'auth/network-request-failed':'네트워크 오류입니다.'
+        };
+        showError(map[code] || `회원가입 실패: ${code || err?.message || err}`);
+      }
     };
-    showError(m[err?.code] || '회원가입 실패', err);
-  }
-};
 
-
-document.getElementById('loginBtn').onclick = async ()=>{
-  try{
-    const email=(emailEl.value||'').trim();
-    const pass=passEl.value||'';
-    if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
-    const { signInWithEmailAndPassword } = window.__fb_api;
-    await signInWithEmailAndPassword(window.__fb.auth, email, pass);
-    // onAuthStateChanged에서 후속 처리
-  }catch(err){
-    const code = err?.code || '';
-    const map = {
-      'auth/user-not-found': '계정을 찾을 수 없습니다. 먼저 회원가입을 해주세요.',
-      'auth/wrong-password': '비밀번호가 올바르지 않습니다.',
-      'auth/invalid-email': '이메일 형식이 올바르지 않습니다.',
-      'auth/network-request-failed': '네트워크 오류입니다. 인터넷 연결/차단 설정을 확인하세요.'
+    document.getElementById('resetPwBtn').onclick = async ()=>{
+      try{
+        const email = (emailEl.value||'').trim();
+        if(!email){ showError('재설정할 이메일을 먼저 입력하세요.'); return; }
+        const mod = await import('https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js');
+        await mod.sendPasswordResetEmail(window.__fb.auth, email);
+        showError('비밀번호 재설정 메일을 보냈습니다. 메일함을 확인하세요.');
+      }catch(err){
+        const code = err?.code || '';
+        const map = {
+          'auth/invalid-email':'이메일 형식이 올바르지 않습니다.',
+          'auth/user-not-found':'해당 이메일의 계정이 없습니다.',
+          'auth/network-request-failed':'네트워크 오류입니다.'
+        };
+        showError(map[code] || `재설정 실패: ${code || err?.message || err}`);
+      }
     };
-    showError(map[code] || `로그인 실패: ${code || err?.message || err}`);
-  }
-};
+
+    document.getElementById('logoutBtn').onclick = async ()=>{
+      try{
+        const { signOut } = window.__fb_api;
+        await signOut(window.__fb.auth);
+      }catch(e){
+        console.warn('[logout] fail', e);
+      }
+    };
 
     // 인증 상태 변화 핸들러
     (function watchAuth(){
@@ -667,14 +695,6 @@ document.getElementById('loginBtn').onclick = async ()=>{
       await updateHeaderUser();
     }
 
-    function showError(msg, err){
-    const box = document.getElementById('envErr');
-    const detail = err ? ` [${err.code||''}] ${err.message||''}` : '';
-    if(box){ box.textContent = msg + detail; }
-    console.error('[AUTH ERROR]', msg, err);
-    }
-
-    
     /* ================= 질문 모달 ================= */
     function openQuestion(idx){
       currentIdx=idx;
@@ -990,5 +1010,3 @@ document.getElementById('loginBtn').onclick = async ()=>{
   </script>
 </body>
 </html>
-
-
