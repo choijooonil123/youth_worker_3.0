@@ -1,0 +1,421 @@
+<!--
+청소년지도사 면접 시스템 (Firebase 동기화 & 로그인)
+- 요구사항: 기기가 달라도 같은 계정으로 로그인하면 동일한 데이터/진행상태 사용
+- 구현 스택: Firebase Authentication(Email/Password) + Cloud Firestore + Firestore Rules
+- 구성: 0) 설정 가이드 1) Firestore 보안 규칙 2) index.html 단일 파일 앱(브라우저에서 실행)
+
+=======================
+0) 설정 가이드 (요약)
+=======================
+1. https://console.firebase.google.com 에서 프로젝트 생성 → 웹 앱 추가(</> 아이콘)
+2. 프로젝트 설정 → SDK 설정 및 구성에서 "firebaseConfig" 값을 복사해 아래 index.html의 CONFIG_HERE 위치에 붙여넣기
+3. Firestore 생성(프로덕션 모드 권장) → 아래 "1) Firestore Rules"를 복사해 보안 규칙에 붙여넣고 게시
+4. Authentication에서 "이메일/비밀번호" 제공자 활성화
+5. index.html 파일을 브라우저로 열고 사용(로컬 파일로 열어도 동작, 단 일부 브라우저는 파일 URL에서 팝업/리다이렉션 제한이 있을 수 있어 간단한 http 서버 권장)
+
+컬렉션 구조(예시)
+- profiles/{uid} { displayName: string, role: 'user' | 'admin', createdAt: serverTimestamp }
+- questions/{qid} { subject, prompt, createdBy(uid), createdAt }
+- answers/{aid} { questionId, body, authorId, authorName, isOfficial, createdAt }
+- sessions/{sid} { userId, startedAt, finishedAt, mode, note }
+- attempts/{aid} { sessionId, questionId, userId, userAnswer, score, createdAt }
+
+=======================
+1) Firestore Rules (복사하여 콘솔에 게시)
+=======================
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin(uid) {
+      return exists(/databases/$(database)/documents/profiles/$(uid)) &&
+        get(/databases/$(database)/documents/profiles/$(uid)).data.role == 'admin';
+    }
+
+    // 프로필: 본인만 읽기/쓰기
+    match /profiles/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 질문: 모두 읽기, 쓰기는 로그인 사용자. 수정/삭제는 작성자 또는 관리자만
+    match /questions/{qid} {
+      allow get, list: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || isAdmin(request.auth.uid)
+      );
+    }
+
+    // 정답: 모두 읽기, 작성은 로그인 사용자. 수정/삭제는 작성자 또는 관리자만
+    match /answers/{aid} {
+      allow get, list: if true;
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (
+        resource.data.authorId == request.auth.uid || isAdmin(request.auth.uid)
+      );
+    }
+
+    // 개인 세션/시도 기록: 본인만 읽기/쓰기
+    match /sessions/{sid} {
+      allow read, write: if isSignedIn() && (
+        request.resource.data.userId == request.auth.uid || resource.data.userId == request.auth.uid
+      );
+    }
+
+    match /attempts/{aid} {
+      allow read, write: if isSignedIn() && (
+        request.resource.data.userId == request.auth.uid || resource.data.userId == request.auth.uid
+      );
+    }
+  }
+}
+
+=======================
+2) index.html (단일 파일 앱)
+=======================
+-- 아래 파일 하나로 실행 가능. Firebase v11 modular CDN 사용
+-- 기능: 회원가입/로그인, 프로필(표시 이름/권한), 질문/정답 CRUD, 작성자 또는 관리자만 편집/삭제,
+--       정답 추가 시 끝에 <작성자> 자동 부착, 실시간(onSnapshot) 반영
+
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>청소년지도사 면접 시스템 (Firebase)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--bg:#0b1020;--panel:#10183a;--ink:#eaf0ff;--muted:#a7b3d4;--brand:#6aa6ff;--accent:#a176ff;--ok:#4cd97b;--danger:#ff6a6a}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Pretendard,ui-sans-serif,system-ui,Apple SD Gothic Neo,Noto Sans KR,Segoe UI,Roboto,sans-serif;color:var(--ink);background:radial-gradient(1200px 800px at 80% -10%,#1a2650 0%,#0b1020 45%)}
+    header{padding:16px 20px;display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,.2);backdrop-filter:blur(8px);position:sticky;top:0;z-index:10}
+    h1{font-size:18px;margin:0;font-weight:700}
+    .container{max-width:1120px;margin:24px auto;padding:0 16px}
+    .panel{background:var(--panel);border:1px solid #1e2a5a;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+    .grid{display:grid;gap:16px}
+    .grid-2{grid-template-columns:1fr 1fr}
+    .row{display:flex;gap:12px;align-items:center}
+    input,textarea,select,button{font:inherit}
+    input,textarea{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #33407a;background:#0e1540;color:var(--ink)}
+    textarea{min-height:110px;resize:vertical}
+    button{padding:10px 14px;border-radius:12px;border:1px solid #33407a;background:linear-gradient(180deg,#283578,#162056);color:var(--ink);cursor:pointer}
+    button.primary{background:linear-gradient(180deg,#5b8cff,#4468cc);border-color:#5b8cff}
+    button.ghost{background:transparent;border-color:#33407a}
+    button.danger{background:linear-gradient(180deg,#ff8b8b,#d95b5b);border-color:#ff8b8b}
+    .muted{color:var(--muted)}
+    .tag{display:inline-flex;gap:6px;align-items:center;padding:2px 8px;border-radius:999px;border:1px solid #2a3570;background:#0f1747;font-size:12px;color:#cfe0ff}
+    .hidden{display:none}
+    .list{list-style:none;margin:0;padding:0}
+    .item{padding:12px 14px;border-top:1px solid #1a2650}
+    .item:first-child{border-top:none;border-radius:16px 16px 0 0}
+    .item:last-child{border-radius:0 0 16px 16px}
+    .right{margin-left:auto}
+  </style>
+  <!-- Firebase v11 (modular) -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, updateProfile } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js';
+    import { getFirestore, serverTimestamp, doc, getDoc, setDoc, updateDoc, addDoc, deleteDoc, collection, query, where, orderBy, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js';
+
+    // ============================
+    // 0) Firebase 초기화 (여기를 교체)
+    // ============================
+    const firebaseConfig = /** CONFIG_HERE **/ {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // ============================
+    // DOM refs
+    // ============================
+    const userBox = document.getElementById('userBox');
+    const roleTag = document.getElementById('roleTag');
+
+    const loginEmail = document.getElementById('loginEmail');
+    const loginPw = document.getElementById('loginPw');
+    const signEmail = document.getElementById('signEmail');
+    const signPw = document.getElementById('signPw');
+    const signName = document.getElementById('signName');
+
+    const btnLogin = document.getElementById('btnLogin');
+    const btnLogout = document.getElementById('btnLogout');
+    const btnSignup = document.getElementById('btnSignup');
+
+    const qSubject = document.getElementById('qSubject');
+    const qPrompt  = document.getElementById('qPrompt');
+    const btnAddQ  = document.getElementById('btnAddQ');
+    const qList    = document.getElementById('qList');
+
+    // runtime state
+    let currentUser = null;
+    let currentProfile = null; // {displayName, role}
+    let unsubQuestions = null;
+
+    // ============================
+    // Auth & Profile
+    // ============================
+    onAuthStateChanged(auth, async (u) => {
+      currentUser = u;
+      if (currentUser) {
+        await ensureProfile(currentUser);
+        await loadProfile(currentUser.uid);
+        listenQuestions();
+      } else {
+        currentProfile = null;
+        roleTag.textContent = 'role: -';
+        qList.innerHTML = '';
+        if (unsubQuestions) { unsubQuestions(); unsubQuestions = null; }
+      }
+      renderUserBox();
+    });
+
+    async function ensureProfile(user){
+      const ref = doc(db, 'profiles', user.uid);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        await setDoc(ref, {
+          displayName: user.displayName || (user.email?.split('@')[0] ?? '사용자'),
+          role: 'user',
+          createdAt: serverTimestamp()
+        });
+      }
+    }
+
+    async function loadProfile(uid){
+      const ref = doc(db, 'profiles', uid);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        currentProfile = snap.data();
+        roleTag.textContent = `role: ${currentProfile.role}`;
+      }
+    }
+
+    function renderUserBox(){
+      userBox.innerHTML = '';
+      if (currentUser) {
+        const span = document.createElement('span');
+        span.textContent = currentProfile?.displayName || currentUser.email;
+        const out = document.createElement('button');
+        out.textContent = '로그아웃';
+        out.addEventListener('click', ()=> signOut(auth));
+        userBox.append(span, out);
+      } else {
+        const span = document.createElement('span');
+        span.textContent = '로그인 필요';
+        userBox.append(span);
+      }
+    }
+
+    btnSignup.addEventListener('click', async () => {
+      const email = signEmail.value.trim();
+      const pw    = signPw.value.trim();
+      const name  = signName.value.trim() || '사용자';
+      if(!email || !pw) return alert('이메일/비밀번호를 입력하세요');
+      try {
+        const cred = await createUserWithEmailAndPassword(auth, email, pw);
+        await updateProfile(cred.user, { displayName: name });
+        await ensureProfile(cred.user);
+        alert('회원가입 완료! 이제 로그인 상태로 이용 가능합니다.');
+      } catch (e){ alert(e.message); }
+    });
+
+    btnLogin.addEventListener('click', async () => {
+      const email = loginEmail.value.trim();
+      const pw    = loginPw.value.trim();
+      try {
+        await signInWithEmailAndPassword(auth, email, pw);
+      } catch (e){ alert(e.message); }
+    });
+
+    btnLogout.addEventListener('click', ()=> signOut(auth));
+
+    // ============================
+    // Questions + Answers (Realtime)
+    // ============================
+    btnAddQ.addEventListener('click', async () => {
+      if(!currentUser) return alert('로그인이 필요합니다.');
+      const subject = qSubject.value.trim();
+      const prompt  = qPrompt.value.trim();
+      if(!subject || !prompt) return alert('과목/질문을 입력하세요.');
+      try {
+        await addDoc(collection(db, 'questions'), {
+          subject, prompt,
+          createdBy: currentUser.uid,
+          createdAt: serverTimestamp()
+        });
+        qPrompt.value = '';
+      } catch (e){ alert(e.message); }
+    });
+
+    function listenQuestions(){
+      if (unsubQuestions) { unsubQuestions(); unsubQuestions = null; }
+      const qq = query(collection(db, 'questions'), orderBy('createdAt', 'desc'));
+      unsubQuestions = onSnapshot(qq, async (snap) => {
+        const rows = [];
+        snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+        renderQuestions(rows);
+      });
+    }
+
+    async function renderQuestions(rows){
+      qList.innerHTML = '';
+      for (const q of rows){
+        const li = document.createElement('li'); li.className='item';
+        const head = document.createElement('div'); head.className='row';
+        const title = document.createElement('div');
+        title.innerHTML = `<strong>[${esc(q.subject)}]</strong> ${esc(q.prompt)}`;
+        head.appendChild(title);
+
+        if (currentUser && (q.createdBy === currentUser.uid || currentProfile?.role === 'admin')){
+          const del = document.createElement('button'); del.className='danger right'; del.textContent='질문 삭제';
+          del.addEventListener('click', async()=>{
+            if(!confirm('삭제하시겠습니까?')) return;
+            try { await deleteDoc(doc(db, 'questions', q.id)); } catch (e){ alert(e.message); }
+          });
+          head.appendChild(del);
+        }
+
+        const ansWrap = document.createElement('div'); ansWrap.style.marginTop='8px';
+        const ansList = document.createElement('ul'); ansList.className='list';
+        ansWrap.appendChild(ansList);
+
+        // answers realtime
+        const aq = query(collection(db, 'answers'), where('questionId','==', q.id), orderBy('createdAt','asc'));
+        onSnapshot(aq, (snap)=>{
+          ansList.innerHTML='';
+          snap.forEach(aDoc => {
+            const a = { id: aDoc.id, ...aDoc.data() };
+            const liA = document.createElement('li'); liA.className='item';
+            const row = document.createElement('div'); row.className='row';
+            const span = document.createElement('div');
+            span.innerHTML = esc(a.body) + (a.isOfficial ? ' <span class="tag">관리자</span>' : '');
+            row.appendChild(span);
+
+            if (currentUser && (a.authorId === currentUser.uid || currentProfile?.role === 'admin')){
+              const edit = document.createElement('button'); edit.className='ghost right'; edit.textContent='편집';
+              const del  = document.createElement('button'); del.className='danger'; del.textContent='삭제'; del.style.marginLeft='8px';
+              edit.addEventListener('click', async()=>{
+                const next = prompt('수정할 내용을 입력하세요', a.body);
+                if(next && next.trim()){
+                  try { await updateDoc(doc(db,'answers',a.id), { body: next.trim() }); }
+                  catch(e){ alert(e.message); }
+                }
+              });
+              del.addEventListener('click', async()=>{
+                if(!confirm('정답을 삭제할까요?')) return;
+                try { await deleteDoc(doc(db,'answers',a.id)); } catch(e){ alert(e.message); }
+              });
+              row.append(edit, del);
+            }
+
+            liA.appendChild(row);
+            ansList.appendChild(liA);
+          });
+        });
+
+        // add answer
+        const addRow = document.createElement('div'); addRow.className='row'; addRow.style.marginTop='8px';
+        const ta = document.createElement('textarea'); ta.placeholder='정답 추가 (끝에 <작성자> 자동 부착)';
+        const btn = document.createElement('button'); btn.className='primary'; btn.textContent='정답 추가';
+        btn.addEventListener('click', async()=>{
+          if(!currentUser) return alert('로그인 필요');
+          const body = (ta.value||'').trim(); if(!body) return;
+          const authorName = currentProfile?.displayName || currentUser.email;
+          const withTag = `${body} <${authorName}>`;
+          try {
+            await addDoc(collection(db,'answers'), {
+              questionId: q.id,
+              body: withTag,
+              authorId: currentUser.uid,
+              authorName,
+              isOfficial: false,
+              createdAt: serverTimestamp()
+            });
+            ta.value='';
+          } catch(e){ alert(e.message); }
+        });
+        addRow.append(ta, btn);
+
+        li.append(head, ansWrap, addRow);
+        qList.appendChild(li);
+      }
+    }
+
+    // ============================
+    // utils
+    // ============================
+    function esc(s){
+      return String(s ?? '').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;' }[c]));
+    }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>청소년지도사 면접 시스템 <span class="tag">Firebase 동기화</span></h1>
+    <div id="userBox" class="row"></div>
+  </header>
+
+  <div class="container grid">
+    <!-- 1) 인증 패널 -->
+    <section class="panel" style="padding:16px">
+      <div class="grid grid-2">
+        <div>
+          <h3>로그인</h3>
+          <input id="loginEmail" placeholder="이메일" type="email"/>
+          <input id="loginPw" placeholder="비밀번호" type="password" style="margin-top:8px"/>
+          <div class="row" style="margin-top:8px">
+            <button class="primary" id="btnLogin">로그인</button>
+            <button class="ghost" id="btnLogout">로그아웃</button>
+          </div>
+        </div>
+        <div>
+          <h3>회원가입</h3>
+          <input id="signEmail" placeholder="이메일" type="email"/>
+          <input id="signPw" placeholder="비밀번호(6자 이상)" type="password" style="margin-top:8px"/>
+          <input id="signName" placeholder="표시 이름(예: 홍길동)" style="margin-top:8px"/>
+          <div class="row" style="margin-top:8px">
+            <button class="primary" id="btnSignup">회원가입</button>
+          </div>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:8px">* 가입 후 자동으로 프로필이 만들어집니다. 관리자로 승격하려면 Firestore의 profiles/{uid}.role 값을 'admin'으로 바꾸세요.</p>
+    </section>
+
+    <!-- 2) 메인 UI: 질문/정답 -->
+    <section class="panel" style="padding:16px">
+      <div class="row">
+        <h3 style="margin:0">문항 뱅크</h3>
+        <span class="right tag" id="roleTag">role: -</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="qSubject" placeholder="과목 (예: 청소년상담)" style="max-width:220px"/>
+        <input id="qPrompt" placeholder="질문 입력"/>
+        <button class="primary" id="btnAddQ">문항 추가</button>
+      </div>
+      <ul id="qList" class="list" style="margin-top:12px"></ul>
+    </section>
+
+    <!-- 3) (옵션) 관리자 도구는 추후 Cloud Functions로 확장 가능
+         - auth 사용자 삭제, 일괄 import/export, 랭킹 계산 등 서버 권한 필요 작업
+    -->
+  </div>
+
+  <footer class="container" style="margin-bottom:40px;color:#8ea1ff">
+    <p class="muted">※ 고급 관리자 기능(사용자 완전삭제, 초기 정답 일괄 등록, 랭킹 계산 등)은 Cloud Functions(관리자 권한)으로 확장 가능합니다.</p>
+  </footer>
+</body>
+</html>
