@@ -395,35 +395,50 @@
     }
     async function saveProgressForUser(uid, learnedIds){
       const local = lsGet(LS_PROG, {});
-      local[uid] = { learnedIds: Array.from(new Set(learnedIds)) };
+      const displayName = (currentUser && currentUser.name) ? currentUser.name : (local[uid]?.displayName || '사용자');
+    
+      local[uid] = {
+        learnedIds: Array.from(new Set(learnedIds)),
+        displayName,                       // ✅ 표시이름 함께 보관
+        updatedAt: new Date().toISOString()
+      };
       lsSet(LS_PROG, local);
+    
       if(window.__cloudReady){
         try{
           const { setDoc, doc } = window.__fb_api;
           const db = window.__fb.db;
-          await setDoc(doc(db, "progress", uid), local[uid], { merge:true });
+          await setDoc(doc(db, "progress", uid), local[uid], { merge:true }); // ✅ merge
         }catch(e){
           console.warn('[saveProgressForUser] cloud fail (local kept)', e);
         }
       }
     }
 
+
     /* ================= 순위/헤더 ================= */
     async function renderRanks(){
       const progress = await loadProgress();
       const usersMap = await loadUsersMap();
       const total = raw.length || 1;
-
-      const rows = Object.keys(progress)
-        .map(uid=>{
+    
+      const rows = Object.keys(progress).map(uid=>{
           const learned = (progress[uid]?.learnedIds || []).length;
           const rate = ((learned / total) * 100).toFixed(1);
-          const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
-          return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
+    
+          // ✅ 이름 우선순위: users.displayName → progress.displayName → UID 축약
+          const userDoc = usersMap.get(uid);
+          const nameFromUsers = userDoc && userDoc.displayName;
+          const nameFromProgress = progress[uid]?.displayName;
+          const fallback = uid.length > 10 ? uid.slice(0,6) + '…' : uid;
+          const name = nameFromUsers || nameFromProgress || fallback;
+    
+          const role = (userDoc && userDoc.role) || 'user';
+          return { uid, name, role, learned, rate };
         })
-        .filter(r=> r.role !== 'admin') // 관리자 제외
+        .filter(r=> r.role !== 'admin')           // 관리자 제외
         .sort((a,b)=> b.learned - a.learned);
-
+    
       const html = '<h3>학습자 순위</h3>' + (
         rows.length
           ? rows.map((r,i)=>`<div>${i+1}위 ${esc(r.name)} — 습득수: ${r.learned}, 습득율: ${r.rate}%</div>`).join('')
@@ -431,6 +446,7 @@
       );
       document.getElementById('rankList').innerHTML = html;
     }
+
     async function updateHeaderUser(){
       const rankEl = document.getElementById('headerRank');
       const userEl = document.getElementById('headerUser');
@@ -1041,6 +1057,7 @@ async function postLoginUI(){
   </script>
 </body>
 </html>
+
 
 
 
