@@ -45,25 +45,26 @@
     .answer-box, #extraInfo { font-size:14px; }
   </style>
 
-  <!-- 최소 Firestore 규칙(콘솔에 Publish)
-  rules_version = '2';
-  service cloud.firestore {
-    match /databases/{database}/documents {
-      function signedIn() { return request.auth != null; }
-      match /users/{uid} {
-        allow read: if signedIn();
-        allow create, update: if signedIn() && request.auth.uid == uid;
-      }
-      match /progress/{uid} {
-        allow read: if signedIn();
-        allow create, update: if signedIn() && request.auth.uid == uid;
-      }
-      match /sharedData/{docId} {
-        allow read: if true;
-        allow create, update, delete: if signedIn();
+  <!--
+    🔐 Firestore 규칙(최소 권장, 콘솔에 Publish):
+    rules_version = '2';
+    service cloud.firestore {
+      match /databases/{database}/documents {
+        function signedIn() { return request.auth != null; }
+        match /users/{uid} {
+          allow read: if signedIn();
+          allow create, update: if signedIn() && request.auth.uid == uid;
+        }
+        match /progress/{uid} {
+          allow read: if signedIn();
+          allow create, update: if signedIn() && request.auth.uid == uid;
+        }
+        match /sharedData/{docId} {
+          allow read: if true;
+          allow create, update, delete: if signedIn();
+        }
       }
     }
-  }
   -->
 
   <!-- Firebase SDK (ESM) -->
@@ -77,7 +78,7 @@
       createUserWithEmailAndPassword, signOut, updateProfile
     } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
-    /* 🔑 콘솔 값과 동일하게! */
+    /* 🔑 Firebase 콘솔 값으로 교체 가능 */
     const firebaseConfig = {
       apiKey: "AIzaSyB8uvt7bkZokVkHT7nO0QRaB9WpEe2g2C4",
       authDomain: "youth-worker.firebaseapp.com",
@@ -111,7 +112,7 @@
     }
   </script>
 
-  <!-- 폴백 (오프라인에서도 UI만 동작) -->
+  <!-- 파이어베이스 실패 시 전역 폴백 (UI는 계속 동작) -->
   <script>
     window.__cloudReady = window.__cloudReady || false;
     window.__fb       = window.__fb       || { db:null, auth:null, colShared:()=>({}), colProgress:()=>({}), colUsers:()=>({}) };
@@ -126,13 +127,6 @@
     window.__fb_api.createUserWithEmailAndPassword = window.__fb_api.createUserWithEmailAndPassword || (async ()=>{ throw new Error('auth disabled'); });
     window.__fb_api.signOut = window.__fb_api.signOut || (async ()=>{});
     window.__fb_api.updateProfile = window.__fb_api.updateProfile || (async ()=>{});
-
-    function showError(msg){
-      const box = document.getElementById('envErr');
-      if(box){ box.textContent = msg; }
-      console.error('[APP]', msg);
-    }
-    const setVisible = (el, vis) => el.style.display = vis ? '' : 'none';
   </script>
 </head>
 <body>
@@ -237,13 +231,21 @@
     const LS_PROG   = 'yj_progress_backup_v1';
 
     const ADMIN_EMAILS = new Set([
-      // 필요시 관리자 이메일 추가: 'admin@example.com'
+      // 필요 시 관리자 이메일 등록
+      // 'admin@example.com'
     ]);
 
     const normSubj = s => (s && String(s).trim()) ? String(s).trim() : '기타';
-    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;","~":"~","\"":"&quot;","'":"&#39;"}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
+    function showError(msg){
+      const box = document.getElementById('envErr');
+      if(box){ box.textContent = msg; }
+      console.error('[APP]', msg);
+    }
+
+    /* ================= 로컬 폴백 저장소 ================= */
     function lsGet(key, def){ try{ const v=localStorage.getItem(key); return v? JSON.parse(v): def; }catch{return def;} }
     function lsSet(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
 
@@ -309,7 +311,7 @@
           const snap = await getDocs(window.__fb.colShared());
           const arr = [];
           snap.forEach(d => arr.push(d.data()));
-          lsSet(LS_SHARED, arr);
+          lsSet(LS_SHARED, arr); // 로컬 백업
           return arr;
         }catch(e){
           console.warn('[loadShared] cloud fail -> local fallback', e);
@@ -318,7 +320,7 @@
       return lsGet(LS_SHARED, []);
     }
     async function saveShared(array){
-      lsSet(LS_SHARED, array);
+      lsSet(LS_SHARED, array); // 로컬 항상 유지
       if(window.__cloudReady){
         try{
           const { writeBatch, doc } = window.__fb_api;
@@ -372,7 +374,7 @@
           const { getDocs } = window.__fb_api;
           const snap = await getDocs(window.__fb.colProgress());
           const obj = {};
-          snap.forEach(d => { obj[d.id] = d.data(); });
+          snap.forEach(d => { obj[d.id] = d.data(); }); // key = uid
           lsSet(LS_PROG, obj);
           return obj;
         }catch(e){
@@ -402,17 +404,14 @@
       const usersMap = await loadUsersMap();
       const total = raw.length || 1;
 
-      // users 컬렉션에 존재 & 관리자 제외
-      const validUids = new Set([...usersMap.keys()].filter(uid => (usersMap.get(uid)?.role || 'user') !== 'admin'));
-
       const rows = Object.keys(progress)
-        .filter(uid => validUids.has(uid))
         .map(uid=>{
           const learned = (progress[uid]?.learnedIds || []).length;
           const rate = ((learned / total) * 100).toFixed(1);
-          const info = usersMap.get(uid) || { displayName: uid };
-          return { uid, name: info.displayName || uid, learned, rate };
+          const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
+          return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
         })
+        .filter(r=> r.role !== 'admin')
         .sort((a,b)=> b.learned - a.learned);
 
       const html = '<h3>학습자 순위</h3>' + (
@@ -422,7 +421,6 @@
       );
       document.getElementById('rankList').innerHTML = html;
     }
-
     async function updateHeaderUser(){
       const rankEl = document.getElementById('headerRank');
       const userEl = document.getElementById('headerUser');
@@ -432,22 +430,19 @@
         rankEl.style.display='none'; userEl.style.display='none'; lo.style.display='none';
         return;
       }
-
       const progress = await loadProgress();
-      const usersMap = await loadUsersMap();
-      const total = raw.length || 1;
-
       const my = progress[currentUser.uid]?.learnedIds || [];
       const myLearned = my.length;
+      const total = raw.length || 1;
       const rate = ((myLearned / total) * 100).toFixed(1);
 
-      const validUids = new Set([...usersMap.keys()].filter(uid => (usersMap.get(uid)?.role || 'user') !== 'admin'));
-
-      const rows = Object.keys(progress)
-        .filter(uid => validUids.has(uid))
-        .map(uid => ({ uid, learned: (progress[uid]?.learnedIds || []).length }))
-        .sort((a,b) => b.learned - a.learned);
-
+      const usersMap = await loadUsersMap();
+      const rows = Object.keys(progress).map(uid=>{
+        const learned = (progress[uid]?.learnedIds||[]).length;
+        const info = usersMap.get(uid)||{role:'user'};
+        return { uid, learned, role: info.role||'user' };
+      }).filter(r=> r.role !== 'admin')
+        .sort((a,b)=> b.learned - a.learned);
       const idx = rows.findIndex(r=> r.uid === currentUser.uid);
 
       rankEl.textContent = `총문제수: ${total} · 습득수: ${myLearned} · 습득율: ${rate}% · 순위: ${idx>=0? (idx+1)+'위':'-'}`;
@@ -531,22 +526,24 @@
     }
 
     /* ================= 과목/리스트 ================= */
-    function subjects(){ return Array.from(new Set(raw.map(x=>normSubj(x.subject)))).sort(); }
+    // ✅ 드롭다운 이상 항목 방지: trim + 빈값 제거 + 중복 제거
+    function subjects(){
+      const list = raw
+        .map(x => (x && x.subject != null ? String(x.subject) : ''))
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      return Array.from(new Set(list)).sort();
+    }
     function initSubjectSelect(){
       const sel=document.getElementById('subjectSelect');
       const subs=subjects();
       sel.innerHTML=subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
       if(subs.length) sel.value=subs[0]; else sel.value='';
       sel.onchange = ()=>{ renderBySubject(currentSubject()); updateCounts(); };
-      // 첫 렌더
       renderBySubject(currentSubject());
       updateCounts();
     }
-    function currentSubject(){
-      const sel=document.getElementById('subjectSelect');
-      const val = sel && sel.value ? sel.value : (subjects()[0]||'기타');
-      return normSubj(val);
-    }
+    function currentSubject(){ const sel=document.getElementById('subjectSelect'); return sel&&sel.value?sel.value:(subjects()[0]||'기타'); }
     function renderBySubject(subj){
       const grid=document.getElementById('grid');
       if(!raw || raw.length===0){
@@ -569,13 +566,12 @@
     const nameEl = document.getElementById('displayName');
 
     async function postLoginUI(){
-      // 안전한 토글
-      setVisible(document.getElementById('loginPanel'), false);
-      setVisible(document.getElementById('mainPanel'),  true);
-      setVisible(document.getElementById('logoutBtn'),  true);
+      document.getElementById('loginPanel').style.display='none';
+      document.getElementById('mainPanel').style.display='block';
+      document.getElementById('logoutBtn').style.display='inline-block';
       document.getElementById('grid').innerHTML = '<div style="opacity:.7;padding:12px">데이터 불러오는 중…</div>';
-      await quickRenderBase(); // 1단계
-      await bootstrap();       // 2단계 (공유 병합)
+      await quickRenderBase();
+      await bootstrap();
       await renderRanks();
       await updateHeaderUser();
     }
@@ -587,7 +583,6 @@
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
         await signInWithEmailAndPassword(window.__fb.auth, email, pass);
-        // 이후 onAuthStateChanged에서 postLoginUI
       }catch(err){
         const code = err?.code || '';
         const map = {
@@ -652,25 +647,27 @@
       }
     };
 
-    // 인증 상태 변화 핸들러 (한 번만 등록)
+    // ✅ 인증 상태 변화 핸들러 (전환 보강)
     (function watchAuth(){
       if(!window.__cloudReady) return;
       const { onAuthStateChanged } = window.__fb_api;
       onAuthStateChanged(window.__fb.auth, async (user)=>{
-        console.log('[AUTH] state changed =>', user?.uid || null);
         if(user){
-          await ensureUserProfile(user);
+          try{ await ensureUserProfile(user); }catch(e){}
           currentUser = {
             uid: user.uid,
             name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
             role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
           };
-          await postLoginUI(); // ← 로그인 후 즉시 화면 전환
+          // 화면이 로그인 패널인 상태면 안전하게 전환 보강
+          if(document.getElementById('loginPanel').style.display !== 'none'){
+            await postLoginUI();
+          }
         }else{
           currentUser = null;
-          setVisible(document.getElementById('mainPanel'),  false);
-          setVisible(document.getElementById('loginPanel'), true);
-          setVisible(document.getElementById('logoutBtn'),  false);
+          document.getElementById('mainPanel').style.display='none';
+          document.getElementById('loginPanel').style.display='block';
+          document.getElementById('logoutBtn').style.display='none';
           await renderRanks();
           await updateHeaderUser();
         }
@@ -1011,7 +1008,7 @@
       await updateHeaderUser();
     }
 
-    // 초기 진입: 로그인 전에도 순위(관리자 제외) 보여줌
+    // 초기: 로그인 전에도 순위(관리자 제외) 먼저 보여줌
     (async () => {
       const base = await loadBase();
       const std  = standardize(base);
