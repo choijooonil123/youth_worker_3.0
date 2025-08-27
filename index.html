@@ -45,28 +45,6 @@
     .answer-box, #extraInfo { font-size:14px; }
   </style>
 
-  <!--
-    🔐 Firestore 규칙(최소 권장, 콘솔에 Publish):
-    rules_version = '2';
-    service cloud.firestore {
-      match /databases/{database}/documents {
-        function signedIn() { return request.auth != null; }
-        match /users/{uid} {
-          allow read: if signedIn();
-          allow create, update: if signedIn() && request.auth.uid == uid;
-        }
-        match /progress/{uid} {
-          allow read: if signedIn();
-          allow create, update: if signedIn() && request.auth.uid == uid;
-        }
-        match /sharedData/{docId} {
-          allow read: if true;
-          allow create, update, delete: if signedIn();
-        }
-      }
-    }
-  -->
-
   <!-- Firebase SDK (ESM) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
@@ -78,7 +56,6 @@
       createUserWithEmailAndPassword, signOut, updateProfile
     } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
-    /* 🔑 Firebase 콘솔 값으로 교체 가능 */
     const firebaseConfig = {
       apiKey: "AIzaSyB8uvt7bkZokVkHT7nO0QRaB9WpEe2g2C4",
       authDomain: "youth-worker.firebaseapp.com",
@@ -231,12 +208,11 @@
     const LS_PROG   = 'yj_progress_backup_v1';
 
     const ADMIN_EMAILS = new Set([
-      // 필요 시 관리자 이메일 등록
       // 'admin@example.com'
     ]);
 
     const normSubj = s => (s && String(s).trim()) ? String(s).trim() : '기타';
-    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;","~":"~","\"":"&quot;","'":"&#39;"}[m]));
+    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
     function showError(msg){
@@ -303,7 +279,7 @@
       return map;
     }
 
-    /* ================= 데이터 로드/저장 (Cloud-First) ================= */
+    /* ================= 데이터 로드/저장 ================= */
     async function loadShared(){
       if(window.__cloudReady){
         try{
@@ -311,7 +287,7 @@
           const snap = await getDocs(window.__fb.colShared());
           const arr = [];
           snap.forEach(d => arr.push(d.data()));
-          lsSet(LS_SHARED, arr); // 로컬 백업
+          lsSet(LS_SHARED, arr);
           return arr;
         }catch(e){
           console.warn('[loadShared] cloud fail -> local fallback', e);
@@ -320,7 +296,7 @@
       return lsGet(LS_SHARED, []);
     }
     async function saveShared(array){
-      lsSet(LS_SHARED, array); // 로컬 항상 유지
+      lsSet(LS_SHARED, array);
       if(window.__cloudReady){
         try{
           const { writeBatch, doc } = window.__fb_api;
@@ -374,7 +350,7 @@
           const { getDocs } = window.__fb_api;
           const snap = await getDocs(window.__fb.colProgress());
           const obj = {};
-          snap.forEach(d => { obj[d.id] = d.data(); }); // key = uid
+          snap.forEach(d => { obj[d.id] = d.data(); });
           lsSet(LS_PROG, obj);
           return obj;
         }catch(e){
@@ -526,7 +502,6 @@
     }
 
     /* ================= 과목/리스트 ================= */
-    // ✅ 드롭다운 이상 항목 방지: trim + 빈값 제거 + 중복 제거
     function subjects(){
       const list = raw
         .map(x => (x && x.subject != null ? String(x.subject) : ''))
@@ -582,7 +557,19 @@
         const pass=passEl.value||'';
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
-        await signInWithEmailAndPassword(window.__fb.auth, email, pass);
+        const cred = await signInWithEmailAndPassword(window.__fb.auth, email, pass);
+        console.log('[login] success uid=', cred.user?.uid);
+        /* 🔥 강제 전환 보강 */
+        if (window.__fb?.auth?.currentUser) {
+          await ensureUserProfile(window.__fb.auth.currentUser);
+          currentUser = {
+            uid: window.__fb.auth.currentUser.uid,
+            name: window.__fb.auth.currentUser.displayName || (window.__fb.auth.currentUser.email? window.__fb.auth.currentUser.email.split('@')[0] : '사용자'),
+            role: ADMIN_EMAILS.has(window.__fb.auth.currentUser.email) ? 'admin' : 'user'
+          };
+          await postLoginUI();
+        }
+        // onAuthStateChanged에서도 후속 처리됨(중복 안전)
       }catch(err){
         const code = err?.code || '';
         const map = {
@@ -647,7 +634,7 @@
       }
     };
 
-    // ✅ 인증 상태 변화 핸들러 (전환 보강)
+    // 인증 상태 변화 핸들러
     (function watchAuth(){
       if(!window.__cloudReady) return;
       const { onAuthStateChanged } = window.__fb_api;
@@ -659,7 +646,7 @@
             name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
             role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
           };
-          // 화면이 로그인 패널인 상태면 안전하게 전환 보강
+          // 중복호출 안전
           if(document.getElementById('loginPanel').style.display !== 'none'){
             await postLoginUI();
           }
