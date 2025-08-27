@@ -569,16 +569,23 @@
     const passEl = document.getElementById('password');
     const nameEl = document.getElementById('displayName');
 
-    async function postLoginUI(){
-      document.getElementById('loginPanel').style.display='none';
-      document.getElementById('mainPanel').style.display='block';
-      document.getElementById('logoutBtn').style.display='inline-block';
-      document.getElementById('grid').innerHTML = '<div style="opacity:.7;padding:12px">데이터 불러오는 중…</div>';
-      await quickRenderBase(); // 1단계
-      await bootstrap();       // 2단계
-      await renderRanks();
-      await updateHeaderUser();
-    }
+async function postLoginUI(){
+  console.log('[UI] postLoginUI 실행');
+  document.getElementById('loginPanel').style.display='none';
+  document.getElementById('mainPanel').style.display='block';
+  document.getElementById('logoutBtn').style.display='inline-block';
+
+  document.getElementById('grid').innerHTML = '<div style="opacity:.7;padding:12px">데이터 불러오는 중…</div>';
+
+  try {
+    await quickRenderBase();
+    await bootstrap();
+    await renderRanks();
+    await updateHeaderUser();
+  } catch(e){
+    console.error('[UI] postLoginUI error', e);
+  }
+}
 
   document.getElementById('loginBtn').onclick = async () => {
     try {
@@ -669,16 +676,16 @@
 
     onAuthStateChanged(window.__fb.auth, async (user) => {
       console.log('[AUTH] state changed =>', user ? user.uid : null);
-
+    
       if (user) {
         await ensureUserProfile(user);
         currentUser = {
-          uid:  user.uid,
-          name: user.displayName || (user.email ? user.email.split('@')[0] : '사용자'),
-          role: 'user'
+          uid: user.uid,
+          name: user.displayName || user.email.split('@')[0] || '사용자',
+          role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
         };
-        // 로그인 후 새로고침/복귀 시에도 항상 메인으로
-        await postLoginUI();
+        console.log('[AUTH] 로그인 성공, 사용자:', currentUser);
+        await postLoginUI();   // ✅ 무조건 메인으로 전환
       } else {
         currentUser = null;
         document.getElementById('mainPanel').style.display='none';
@@ -1034,5 +1041,6 @@
   </script>
 </body>
 </html>
+
 
 
