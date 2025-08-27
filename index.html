@@ -436,7 +436,7 @@
           const userDoc = usersMap.get(uid);
           const nameFromUsers = userDoc && userDoc.displayName;
           const nameFromProgress = progress[uid]?.displayName;
-          const fallback = uid.length > 10 ? uid.slice(0,6) + '…' : uid;
+          const fallback = uid.length > 10 ? uid.slice(0,6) + '…' : displayName;
           const name = nameFromUsers || nameFromProgress || fallback;
 
     
@@ -1064,6 +1064,7 @@ async function postLoginUI(){
   </script>
 </body>
 </html>
+
 
 
 
