@@ -45,28 +45,6 @@
     .answer-box, #extraInfo { font-size:14px; }
   </style>
 
-  <!--
-    🔐 Firestore 규칙(최소 권장, 콘솔에 Publish):
-    rules_version = '2';
-    service cloud.firestore {
-      match /databases/{database}/documents {
-        function signedIn() { return request.auth != null; }
-        match /users/{uid} {
-          allow read: if signedIn();
-          allow create, update: if signedIn() && request.auth.uid == uid;
-        }
-        match /progress/{uid} {
-          allow read: if signedIn();
-          allow create, update: if signedIn() && request.auth.uid == uid;
-        }
-        match /sharedData/{docId} {
-          allow read: if true;
-          allow create, update, delete: if signedIn();
-        }
-      }
-    }
-  -->
-
   <!-- Firebase SDK (ESM) -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
@@ -78,27 +56,17 @@
       createUserWithEmailAndPassword, signOut, updateProfile
     } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
 
-    /* 🔑 Firebase 콘솔 값으로 교체 가능 
+    /* 🔑 Firebase 콘솔의 Web App 설정값으로 맞추세요 */
     const firebaseConfig = {
       apiKey: "AIzaSyB8uvt7bkZokVkHT7nO0QRaB9WpEe2g2C4",
       authDomain: "youth-worker.firebaseapp.com",
       projectId: "youth-worker",
       storageBucket: "youth-worker.appspot.com",
       messagingSenderId: "666890915384",
-      appId: "1:666890915384:web:2dbc2b4d35aa9e3948a0cd",
-      measurementId: "G-GT3X3E9VTB"
-    };
-    */
-    const firebaseConfig = {
-      apiKey: "AIzaSyB8uvt7bkZokVkHT7nO0QRaB9WpEe2g2C4",
-      authDomain: "youth-worker.firebaseapp.com",
-      projectId: "youth-worker",
-      storageBucket: "youth-worker.firebasestorage.app",
-      messagingSenderId: "666890915384",
       appId: "1:666890915384:web:90381989a786934648a0cd",
       measurementId: "G-T1NCJXS15N"
     };
-    
+
     try{
       const app = initializeApp(firebaseConfig);
       const db  = getFirestore(app);
@@ -241,7 +209,6 @@
     const LS_PROG   = 'yj_progress_backup_v1';
 
     const ADMIN_EMAILS = new Set([
-      // 필요 시 관리자 이메일 등록
       // 'admin@example.com'
     ]);
 
@@ -259,47 +226,35 @@
     function lsGet(key, def){ try{ const v=localStorage.getItem(key); return v? JSON.parse(v): def; }catch{return def;} }
     function lsSet(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
 
-    /* ================= Firestore 진단 ================= */
-    async function pingFirestore(){
-      const box = document.getElementById('envErr');
-      try{
-        if(!window.__cloudReady){ box.textContent=''; return false; }
-        const { getDocs } = window.__fb_api;
-        await getDocs(window.__fb.colShared());
-        box.textContent = '';
-        return true;
-      }catch(e){
-        console.warn('[pingFirestore] Firestore unavailable (silent):', e?.code, e?.message);
-        box.textContent = '';
-        return false;
-      }
-    }
-    document.addEventListener('DOMContentLoaded', ()=>{ pingFirestore(); });
-
     /* ================= Users 헬퍼 ================= */
-    async function ensureUserProfile(user){
+    async function ensureUserProfile(user, desiredDisplayName){
       try{
         if(!window.__cloudReady || !user) return;
         const { db } = window.__fb;
         const { doc, getDoc, setDoc } = window.__fb_api;
         const ref = doc(db, 'users', user.uid);
         const snap = await getDoc(ref);
+
+        // 최우선: 전달받은 desiredDisplayName → 그 다음: auth.displayName → 마지막: 이메일 앞부분
+        const fallbackName = user.email ? user.email.split('@')[0] : '사용자';
+        const safeName = (desiredDisplayName && desiredDisplayName.trim()) ||
+                         user.displayName ||
+                         fallbackName;
+
         const role = ADMIN_EMAILS.has(user.email) ? 'admin' : 'user';
-    
-        const fallbackName = user.displayName || (user.email ? user.email.split('@')[0] : '사용자');
-    
+
         if(!snap.exists()){
           await setDoc(ref, {
-            uid: user.uid,
-            email: user.email || '',
-            displayName: fallbackName,   // ✅ 항상 이름 기록
-            role,
+            uid:user.uid, email:user.email||'',
+            displayName:safeName, role,
             createdAt: new Date().toISOString()
           });
         }else{
           const d = snap.data()||{};
-          if(d.role!==role || d.displayName!==(fallbackName)){
-            await setDoc(ref, { role, displayName: fallbackName }, { merge:true });
+          const needNameUpdate = !d.displayName || d.displayName !== safeName;
+          const needRoleUpdate = (d.role||'user') !== role;
+          if(needNameUpdate || needRoleUpdate){
+            await setDoc(ref, { displayName:safeName, role }, { merge:true });
           }
         }
       }catch(e){ console.warn('ensureUserProfile fail', e); }
@@ -327,7 +282,7 @@
           const snap = await getDocs(window.__fb.colShared());
           const arr = [];
           snap.forEach(d => arr.push(d.data()));
-          lsSet(LS_SHARED, arr); // 로컬 백업
+          lsSet(LS_SHARED, arr);
           return arr;
         }catch(e){
           console.warn('[loadShared] cloud fail -> local fallback', e);
@@ -336,7 +291,7 @@
       return lsGet(LS_SHARED, []);
     }
     async function saveShared(array){
-      lsSet(LS_SHARED, array); // 로컬 항상 유지
+      lsSet(LS_SHARED, array);
       if(window.__cloudReady){
         try{
           const { writeBatch, doc } = window.__fb_api;
@@ -401,51 +356,88 @@
     }
     async function saveProgressForUser(uid, learnedIds){
       const local = lsGet(LS_PROG, {});
-      const displayName = (currentUser && currentUser.name) ? currentUser.name : (local[uid]?.displayName || '사용자');
-    
-      local[uid] = {
-        learnedIds: Array.from(new Set(learnedIds)),
-        displayName,                       // ✅ 표시이름 함께 보관
-        updatedAt: new Date().toISOString()
-      };
+      local[uid] = { learnedIds: Array.from(new Set(learnedIds)) };
       lsSet(LS_PROG, local);
-    
       if(window.__cloudReady){
         try{
           const { setDoc, doc } = window.__fb_api;
           const db = window.__fb.db;
-          await setDoc(doc(db, "progress", uid), local[uid], { merge:true }); // ✅ merge
+          await setDoc(doc(db, "progress", uid), local[uid], { merge:true });
         }catch(e){
           console.warn('[saveProgressForUser] cloud fail (local kept)', e);
         }
       }
     }
 
+    /* ================= 사용자 필터/카운트 ================= */
+    async function applyLearnedFilterForCurrentUser(){
+      const p = await loadProgress();
+      const learned = currentUser ? new Set((p[currentUser.uid]?.learnedIds)||[]) : new Set();
+      data = raw.filter(q=> !learned.has(qKey(q))).map(q=>({...q}));
+    }
+
+    async function updateCounts(){
+      const subj = currentSubject();
+      const p = await loadProgress();
+      const learnedIds = currentUser ? new Set((p[currentUser.uid]?.learnedIds || [])) : new Set();
+
+      const subjectAll = raw.filter(q => normSubj(q.subject) === subj);
+      const subjectTotal = subjectAll.length;
+      const subjectLearned = subjectAll.reduce((acc,q)=>{
+        return acc + (learnedIds.has(`${normSubj(q.subject)}::${q.question}`) ? 1 : 0);
+      }, 0);
+
+      document.getElementById('countTotal').textContent   = `과목별 : 총문제수 ${subjectTotal}`;
+      document.getElementById('countLearned').textContent = `과목별 : 습득수 ${subjectLearned}`;
+    }
+
+    /* ================= 과목/리스트 ================= */
+    function subjects(){ return Array.from(new Set(raw.map(x=>normSubj(x.subject)))).sort(); }
+    function initSubjectSelect(){
+      const sel=document.getElementById('subjectSelect');
+      const subs=subjects();
+      sel.innerHTML=subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+      if(subs.length) sel.value=subs[0]; else sel.value='';
+      sel.onchange = ()=>{ renderBySubject(currentSubject()); updateCounts(); };
+      renderBySubject(currentSubject());
+      updateCounts();
+    }
+    function currentSubject(){ const sel=document.getElementById('subjectSelect'); return sel&&sel.value?sel.value:(subjects()[0]||'기타'); }
+    function renderBySubject(subj){
+      const grid=document.getElementById('grid');
+      if(!raw || raw.length===0){
+        grid.innerHTML = `<div style="padding:12px;opacity:.7">문항 데이터가 없습니다. (youth_quiz_data.json을 확인)</div>`;
+        return;
+      }
+      const list=data.filter(x=>normSubj(x.subject)===subj)
+        .map(q=>`<button class="qbtn" onclick="openQuestion(${q._idx})" title="${esc(q.question)}">${esc(q.question)}</button>`).join('');
+      if(list){
+        grid.innerHTML=list;
+      }else{
+        const totalSubjCount = raw.filter(x=>normSubj(x.subject)===subj).length;
+        grid.innerHTML = `<div style="padding:12px;opacity:.7">이 과목의 미습득 문항이 없습니다.${totalSubjCount? ' (모든 문항을 습득했습니다)': ''}</div>`;
+      }
+    }
 
     /* ================= 순위/헤더 ================= */
+    function maskUid(uid){ return (uid||'').slice(0,6) + '…'; }
+
     async function renderRanks(){
       const progress = await loadProgress();
       const usersMap = await loadUsersMap();
       const total = raw.length || 1;
-    
-      const rows = Object.keys(progress).map(uid=>{
+
+      const rows = Object.keys(progress)
+        .map(uid=>{
           const learned = (progress[uid]?.learnedIds || []).length;
           const rate = ((learned / total) * 100).toFixed(1);
-    
-          // ✅ 이름 우선순위: users.displayName → progress.displayName → UID 축약
-          const userDoc = usersMap.get(uid);
-          const nameFromUsers = userDoc && userDoc.displayName;
-          const nameFromProgress = progress[uid]?.displayName;
-          const fallback = uid.length > 10 ? uid.slice(0,6) + '…' : displayName;
-          const name = nameFromUsers || nameFromProgress || fallback;
-
-    
-          const role = (userDoc && userDoc.role) || 'user';
-          return { uid, name, role, learned, rate };
+          const info = usersMap.get(uid) || { displayName: maskUid(uid), role: 'user' };
+          const name = info.displayName || maskUid(uid);
+          return { uid, name, role: info.role || 'user', learned, rate };
         })
-        .filter(r=> r.role !== 'admin')           // 관리자 제외
+        .filter(r=> r.role !== 'admin')
         .sort((a,b)=> b.learned - a.learned);
-    
+
       const html = '<h3>학습자 순위</h3>' + (
         rows.length
           ? rows.map((r,i)=>`<div>${i+1}위 ${esc(r.name)} — 습득수: ${r.learned}, 습득율: ${r.rate}%</div>`).join('')
@@ -536,110 +528,49 @@
       raw=Array.from(map.values()).map((q,i)=>({...q,_idx:i}));
     }
 
-    /* ================= 사용자 필터/카운트 ================= */
-    async function applyLearnedFilterForCurrentUser(){
-      const p = await loadProgress();
-      const learned = currentUser ? new Set((p[currentUser.uid]?.learnedIds)||[]) : new Set();
-      data = raw.filter(q=> !learned.has(qKey(q))).map(q=>({...q}));
-    }
-
-    async function updateCounts(){
-      const subj = currentSubject();
-      const p = await loadProgress();
-      const learnedIds = currentUser ? new Set((p[currentUser.uid]?.learnedIds || [])) : new Set();
-
-      const subjectAll = raw.filter(q => normSubj(q.subject) === subj);
-      const subjectTotal = subjectAll.length;
-
-      const subjectLearned = subjectAll.reduce((acc,q)=>{
-        return acc + (learnedIds.has(`${normSubj(q.subject)}::${q.question}`) ? 1 : 0);
-      }, 0);
-
-      document.getElementById('countTotal').textContent   = `과목별 : 총문제수 ${subjectTotal}`;
-      document.getElementById('countLearned').textContent = `과목별 : 습득수 ${subjectLearned}`;
-    }
-
-    /* ================= 과목/리스트 ================= */
-    function subjects(){ return Array.from(new Set(raw.map(x=>normSubj(x.subject)))).sort(); }
-    function initSubjectSelect(){
-      const sel=document.getElementById('subjectSelect');
-      const subs=subjects();
-      sel.innerHTML=subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-      if(subs.length) sel.value=subs[0]; else sel.value='';
-      sel.onchange = ()=>{ renderBySubject(currentSubject()); updateCounts(); };
-      renderBySubject(currentSubject());
-      updateCounts();
-    }
-    function currentSubject(){ const sel=document.getElementById('subjectSelect'); return sel&&sel.value?sel.value:(subjects()[0]||'기타'); }
-    function renderBySubject(subj){
-      const grid=document.getElementById('grid');
-      if(!raw || raw.length===0){
-        grid.innerHTML = `<div style="padding:12px;opacity:.7">문항 데이터가 없습니다. (youth_quiz_data.json을 확인)</div>`;
-        return;
-      }
-      const list=data.filter(x=>normSubj(x.subject)===subj)
-        .map(q=>`<button class="qbtn" onclick="openQuestion(${q._idx})" title="${esc(q.question)}">${esc(q.question)}</button>`).join('');
-      if(list){
-        grid.innerHTML=list;
-      }else{
-        const totalSubjCount = raw.filter(x=>normSubj(x.subject)===subj).length;
-        grid.innerHTML = `<div style="padding:12px;opacity:.7">이 과목의 미습득 문항이 없습니다.${totalSubjCount? ' (모든 문항을 습득했습니다)': ''}</div>`;
-      }
-    }
-
     /* ================= 인증/로그인 흐름 ================= */
     const emailEl = document.getElementById('email');
     const passEl = document.getElementById('password');
     const nameEl = document.getElementById('displayName');
 
-async function postLoginUI(){
-  console.log('[UI] postLoginUI 실행');
-  document.getElementById('loginPanel').style.display='none';
-  document.getElementById('mainPanel').style.display='block';
-  document.getElementById('logoutBtn').style.display='inline-block';
-
-  document.getElementById('grid').innerHTML = '<div style="opacity:.7;padding:12px">데이터 불러오는 중…</div>';
-
-  try {
-    await quickRenderBase();
-    await bootstrap();
-    await renderRanks();
-    await updateHeaderUser();
-  } catch(e){
-    console.error('[UI] postLoginUI error', e);
-  }
-}
-
-  document.getElementById('loginBtn').onclick = async () => {
-    try {
-      const email = (emailEl.value || '').trim();
-      const pass  =  passEl.value || '';
-      if (!email || !pass) { showError('이메일과 비밀번호를 입력하세요.'); return; }
-
-      const { signInWithEmailAndPassword } = window.__fb_api;
-      const cred = await signInWithEmailAndPassword(window.__fb.auth, email, pass);
-
-      // ✅ 즉시 전환 (리스너 지연 대비)
-      const u = window.__fb.auth.currentUser || cred.user;
-      currentUser = {
-        uid:  u.uid,
-        name: u.displayName || (u.email ? u.email.split('@')[0] : '사용자'),
-        role: 'user'
-      };
-      await ensureUserProfile(u);
-      await postLoginUI();
-    } catch (err) {
-      const code = err?.code || '';
-      const map = {
-        'auth/invalid-credential':'자격 증명이 올바르지 않습니다(비밀번호 오류 또는 다른 로그인 방식).',
-        'auth/user-not-found':'계정을 찾을 수 없습니다. 먼저 회원가입을 해주세요.',
-        'auth/wrong-password':'비밀번호가 올바르지 않습니다.',
-        'auth/invalid-email':'이메일 형식이 올바르지 않습니다.',
-        'auth/network-request-failed':'네트워크 오류입니다.'
-      };
-      showError(map[code] || `로그인 실패: ${code || err?.message || err}`);
+    async function postLoginUI(){
+      document.getElementById('loginPanel').style.display='none';
+      document.getElementById('mainPanel').style.display='block';
+      document.getElementById('logoutBtn').style.display='inline-block';
+      document.getElementById('grid').innerHTML = '<div style="opacity:.7;padding:12px">데이터 불러오는 중…</div>';
+      await quickRenderBase();
+      await bootstrap();
+      await renderRanks();
+      await updateHeaderUser();
     }
-  };
+
+    document.getElementById('loginBtn').onclick = async ()=>{
+      try{
+        const email=(emailEl.value||'').trim();
+        const pass=passEl.value||'';
+        const maybeDisp=(nameEl.value||'').trim(); // 로그인 시에도 이름 입력 시 반영
+        if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
+        const { signInWithEmailAndPassword, updateProfile } = window.__fb_api;
+        const cred = await signInWithEmailAndPassword(window.__fb.auth, email, pass);
+
+        // 로그인 직후 displayName이 비었고, 입력칸이 있다면 갱신
+        if(maybeDisp && !cred.user.displayName){
+          await updateProfile(cred.user, { displayName: maybeDisp });
+        }
+        await ensureUserProfile(cred.user, maybeDisp);
+        // 상태 변환은 onAuthStateChanged에서 처리
+      }catch(err){
+        const code = err?.code || '';
+        const map = {
+          'auth/invalid-credential':'자격 증명이 올바르지 않습니다(비밀번호 오류 또는 다른 로그인 방식).',
+          'auth/user-not-found':'계정을 찾을 수 없습니다. 먼저 회원가입을 해주세요.',
+          'auth/wrong-password':'비밀번호가 올바르지 않습니다.',
+          'auth/invalid-email':'이메일 형식이 올바르지 않습니다.',
+          'auth/network-request-failed':'네트워크 오류입니다.'
+        };
+        showError(map[code] || `로그인 실패: ${code || err?.message || err}`);
+      }
+    };
 
     document.getElementById('signupBtn').onclick = async ()=>{
       try{
@@ -649,8 +580,10 @@ async function postLoginUI(){
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { createUserWithEmailAndPassword, updateProfile } = window.__fb_api;
         const cred = await createUserWithEmailAndPassword(window.__fb.auth, email, pass);
-        if(disp){ await updateProfile(cred.user, { displayName: disp }); }
-        await ensureUserProfile(cred.user);
+        const fallbackName = email ? email.split('@')[0] : '사용자';
+        const toSet = disp || fallbackName;
+        await updateProfile(cred.user, { displayName: toSet });
+        await ensureUserProfile(cred.user, toSet);
         showError('회원가입 완료! 이제 로그인합니다.');
       }catch(err){
         const code = err?.code || '';
@@ -692,33 +625,31 @@ async function postLoginUI(){
       }
     };
 
-  // 인증 상태 변화 핸들러 (페이지 로드 시 1번만 등록)
-  document.addEventListener('DOMContentLoaded', () => {
-    if (!window.__cloudReady) return;
-    const { onAuthStateChanged } = window.__fb_api;
-
-    onAuthStateChanged(window.__fb.auth, async (user) => {
-      console.log('[AUTH] state changed =>', user ? user.uid : null);
-    
-      if (user) {
-        await ensureUserProfile(user);
-        currentUser = {
-          uid: user.uid,
-          name: user.displayName || user.email.split('@')[0] || '사용자',
-          role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
-        };
-        console.log('[AUTH] 로그인 성공, 사용자:', currentUser);
-        await postLoginUI();   // ✅ 무조건 메인으로 전환
-      } else {
-        currentUser = null;
-        document.getElementById('mainPanel').style.display='none';
-        document.getElementById('loginPanel').style.display='block';
-        document.getElementById('logoutBtn').style.display='none';
-        await renderRanks();
-        await updateHeaderUser();
-      }
-    });
-  });
+    // 인증 상태 변화 핸들러
+    (function watchAuth(){
+      if(!window.__cloudReady) return;
+      const { onAuthStateChanged } = window.__fb_api;
+      onAuthStateChanged(window.__fb.auth, async (user)=>{
+        if(user){
+          // 이름 입력란이 있는 경우, 비어있다면 이메일 앞부분으로 UI 측 이름 채움
+          const desired = (document.getElementById('displayName').value||'').trim();
+          await ensureUserProfile(user, desired);
+          currentUser = {
+            uid: user.uid,
+            name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
+            role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
+          };
+          await postLoginUI();
+        }else{
+          currentUser = null;
+          document.getElementById('mainPanel').style.display='none';
+          document.getElementById('loginPanel').style.display='block';
+          document.getElementById('logoutBtn').style.display='none';
+          await renderRanks();
+          await updateHeaderUser();
+        }
+      });
+    })();
 
     /* ================= 진행도 초기화 ================= */
     document.getElementById('resetProgress').onclick = async ()=>{
@@ -812,30 +743,6 @@ async function postLoginUI(){
       }
       document.getElementById('result').innerHTML = `<div class='answer-box'>${esc(gold)}</div><div class='score'>유사도 ${(sim*100).toFixed(1)}%</div>`;
       speak('정답입니다. ' + gold);
-    };
-
-    /* ================= 습득완료 ================= */
-    document.getElementById('learnedBtn').onclick = async ()=>{
-      if(!currentUser){ alert('로그인 후 사용하세요.'); return; }
-      const q = raw.find(x=>x._idx===currentIdx); if(!q) return;
-      const id = qKey(q);
-
-      data = data.filter(item => qKey(item) !== id);
-      renderBySubject(currentSubject());
-      closeQuestion();
-
-      try{
-        const all = await loadProgress();
-        const mine = new Set((all[currentUser.uid]?.learnedIds || []));
-        mine.add(id);
-        await saveProgressForUser(currentUser.uid, Array.from(mine));
-      }catch(e){ console.warn('[learned] 저장 실패 – 로컬 유지', e); }
-
-      try{
-        await updateCounts();
-        await updateHeaderUser();
-        await renderRanks();
-      }catch(e){}
     };
 
     /* ================= 정답/설명/추가질문 관리 ================= */
@@ -981,66 +888,6 @@ async function postLoginUI(){
       await bootstrap();
     };
 
-    /* ================= 내보내기/가져오기 ================= */
-    (function(){
-      const exportBtn = document.getElementById('exportBtn');
-      const importBtn = document.getElementById('importBtn');
-      const importFile = document.getElementById('importFile');
-
-      function download(filename, text){
-        const blob = new Blob([text], {type: 'application/json;charset=utf-8'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        a.remove();
-      }
-
-      async function exportAll(){
-        const shared = await loadShared();
-        const progress = await loadProgress();
-        const payload = { version: 3, exportedAt: new Date().toISOString(), shared, progress };
-        download('youth-interview-backup.json', JSON.stringify(payload,null,2));
-        alert('내보내기가 완료되었습니다.');
-      }
-
-      async function importAll(file){
-        try{
-          const text = await file.text();
-          const obj = JSON.parse(text);
-          if(typeof obj !== 'object' || obj === null) throw new Error('JSON 형식이 아닙니다.');
-          if(!('shared' in obj) || !('progress' in obj)) throw new Error('shared/progress 키가 없습니다.');
-          if(!Array.isArray(obj.shared)) throw new Error('shared는 배열이어야 합니다.');
-          if(typeof obj.progress !== 'object') throw new Error('progress는 객체여야 합니다.');
-          if(!confirm('현재 데이터가 덮어쓰기/병합됩니다. 진행할까요?')) return;
-
-          await saveShared(obj.shared);
-          const names = Object.keys(obj.progress||{});
-          for(const key of names){
-            const learned = Array.from(new Set((obj.progress[key]?.learnedIds)||[]));
-            await saveProgressForUser(key, learned); // key가 uid거나 과거 사용자명이어도 보존
-          }
-          await bootstrap();
-          alert('가져오기가 완료되었습니다.');
-        }catch(e){
-          console.error(e);
-          alert('가져오기 실패: ' + (e?.message||e));
-        }
-      }
-
-      if(exportBtn) exportBtn.addEventListener('click', exportAll);
-      if(importBtn && importFile){
-        importBtn.addEventListener('click', ()=> importFile.click());
-        importFile.addEventListener('change', (e)=>{
-          const f = e.target.files && e.target.files[0];
-          if(f) importAll(f);
-          e.target.value = '';
-        });
-      }
-    })();
-
     /* ================= 부트스트랩 ================= */
     async function bootstrap(){
       const base=await loadBase();
@@ -1064,9 +911,3 @@ async function postLoginUI(){
   </script>
 </body>
 </html>
-
-
-
-
-
-
