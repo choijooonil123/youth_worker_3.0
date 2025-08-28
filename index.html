@@ -155,7 +155,7 @@
     </div>
   </div>
 
-  <!-- 질문 모달 -->
+  <!-- 질문 모달 등 이하 기존 로직 유지 -->
   <dialog id="qd">
     <div class="dlg">
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -215,7 +215,7 @@
       const v = (s??'').toString().trim();
       return v.length ? v : '기타';
     };
-    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;"," >":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
     function showError(msg){
@@ -445,24 +445,16 @@
         return Array.isArray(j)&&j.length? j : FALLBACK;
       }catch{ return FALLBACK; }
     }
-   
-  function standardize(base){
-    return base.map(x=>({
-      // ★ 변경: 과목 키 다중 지원
-      subject: normSubj(
-        x.subject ??
-        x.subj ??
-        x.category ??
-        x['과목'] ??
-        ''
-      ),
-      question: x.question,
-      answers: Array.isArray(x.answers)? x.answers.filter(Boolean) : [(x.answer||'')].filter(Boolean),
-      active: (typeof x.active==='number'? x.active:0),
-      extraInfo: (typeof x.extraInfo==='string')? x.extraInfo : '',
-      followups: Array.isArray(x.followups)? x.followups.filter(f=>f&&f.q&&f.a) : []
-    }));
-  } 
+    function standardize(base){
+      return base.map(x=>({
+        subject: normSubj(x.subject),
+        question: x.question,
+        answers: Array.isArray(x.answers)? x.answers.filter(Boolean) : [(x.answer||'')].filter(Boolean),
+        active: (typeof x.active==='number'? x.active:0),
+        extraInfo: (typeof x.extraInfo==='string')? x.extraInfo : '',
+        followups: Array.isArray(x.followups)? x.followups.filter(f=>f&&f.q&&f.a) : []
+      }));
+    }
     async function mergeWithShared(baseStd){
       const map=new Map();
       baseStd.forEach(q=> map.set(qKey(q), {...q}) );
@@ -512,7 +504,7 @@
       document.getElementById('countLearned').textContent = `과목별 : 습득수 ${subjectLearned}`;
     }
 
-    /* ================= 과목/리스트 ================= */
+    /* ================= 과목/리스트 (안정화) ================= */
     function subjects(){
       const list = raw.map(q => normSubj(q.subject));
       return Array.from(new Set(list)).sort((a,b)=> a.localeCompare(b));
@@ -522,7 +514,7 @@
       const sel = document.getElementById('subjectSelect');
       const prev = sel.value;
       const subs = subjects();
-      sel.innerHTML = subs.map(s=>`<option value="${s}">${s}</option>`).join('');
+      sel.innerHTML = subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
       sel.value = subs.includes(prev) ? prev : (subs[0] || '기타');
       sel.onchange = async ()=>{
         renderBySubject(currentSubject());
@@ -578,8 +570,7 @@
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
         await signInWithEmailAndPassword(window.__fb.auth, email, pass);
-        /* ✅ 최소 수정: 로그인 성공 즉시 화면 전환 보장 */
-        await postLoginUI();
+        // onAuthStateChanged에서 후속 처리
       }catch(err){
         const code = err?.code || '';
         const map = {
@@ -644,30 +635,41 @@
       }
     };
 
-    // 인증 상태 변화 핸들러 (기존 유지)
-// 인증 상태 변화 핸들러 (기존 유지)
-(function watchAuth(){
-  if(!window.__cloudReady) return;
-  const { onAuthStateChanged } = window.__fb_api;
-  onAuthStateChanged(window.__fb.auth, async (user)=>{
-    if(user){
-      await ensureUserProfile(user);
-      currentUser = {
-        uid: user.uid,
-        name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
-        role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
+    /* ===== 인증 상태 변화 핸들러 (보강: 초기화 지연 대응) ===== */
+    (function watchAuthRobust(){
+      let bound = false;
+      const bind = ()=>{
+        if (bound) return;
+        const ok = window.__cloudReady
+          && window.__fb && window.__fb.auth
+          && window.__fb_api && typeof window.__fb_api.onAuthStateChanged === 'function';
+        if (!ok) return;
+        bound = true;
+
+        window.__fb_api.onAuthStateChanged(window.__fb.auth, async (user)=>{
+          console.log('[AUTH] state changed =>', user?.uid || null);
+          if(user){
+            await ensureUserProfile(user);
+            currentUser = {
+              uid: user.uid,
+              name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
+              role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
+            };
+            await postLoginUI();        // ▶ 로그인 화면 → 메인 화면 전환
+          }else{
+            currentUser = null;
+            document.getElementById('mainPanel').style.display='none';
+            document.getElementById('loginPanel').style.display='block';
+            document.getElementById('logoutBtn').style.display='none';
+            await renderRanks();
+            await updateHeaderUser();   // ▶ 헤더(사용자/순위) 갱신
+          }
+        });
       };
-      await postLoginUI();
-    }else{
-      currentUser = null;
-      document.getElementById('mainPanel').style.display='none';
-      document.getElementById('loginPanel').style.display='block';
-      document.getElementById('logoutBtn').style.display='none';
-      await renderRanks();
-      await updateHeaderUser();
-    }
-  });
-})();
+      bind();
+      const tm = setInterval(()=>{ if(!bound) bind(); else clearInterval(tm); }, 150);
+      window.addEventListener('load', bind);
+    })();
 
     /* ================= 진행도 초기화 ================= */
     document.getElementById('resetProgress').onclick = async ()=>{
@@ -724,7 +726,7 @@
       window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if(!window.SpeechRecognition){ alert('이 브라우저는 음성 인식을 지원하지 않습니다.'); return; }
       recognition=new SpeechRecognition();
-      recognition.lang='ко-KR'; recognition.continuous=true; recognition.interimResults=true;
+      recognition.lang='ko-KR'; recognition.continuous=true; recognition.interimResults=true;
       let finalTranscript='';
       recognition.onresult=(event)=>{
         let interim='';
@@ -949,5 +951,3 @@
   </script>
 </body>
 </html>
-
-
