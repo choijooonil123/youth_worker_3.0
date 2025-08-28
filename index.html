@@ -655,6 +655,7 @@
       }
     };
 
+
     /*================= 인증 상태 변화 핸들러 (원래 버전으로 복구) =================*/
     (function watchAuth(){
       if(!window.__cloudReady) return;
@@ -667,6 +668,14 @@
             name: user.displayName || (user.email ? user.email.split('@')[0] : '사용자'),
             role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
           };
+
+          // 헤더 즉시 반영 (첫 화면에서 표시이름 보이도록)
+          const userEl = document.getElementById('headerUser');
+          const lo = document.getElementById('logoutBtn');
+          userEl.textContent = `사용자: ${currentUser.name}`;
+          userEl.style.display = 'inline-block';
+          lo.style.display = 'inline-block';
+
           await postLoginUI();  // ▶ 로그인 화면 → 메인 화면 전환
         }else{
           currentUser = null;
@@ -1031,6 +1040,7 @@
   </script>
 </body>
 </html>
+
 
 
 
