@@ -645,56 +645,32 @@
       }
     };
 
-    /* ===== 인증 상태 변화 핸들러 (보강) ===== */
-    (function watchAuthRobust(){
-      let bound = false;
-      const bind = ()=>{
-        if (bound) return;
-        const ok = window.__cloudReady
-          && window.__fb && window.__fb.auth
-          && window.__fb_api && typeof window.__fb_api.onAuthStateChanged === 'function';
-        if (!ok) return;
-        bound = true;
+<!-- ================= 인증 상태 변화 핸들러 (원래 버전으로 복구) ================= -->
 
-        window.__fb_api.onAuthStateChanged(window.__fb.auth, async (user)=>{
-          console.log('[AUTH] state changed =>', user?.uid || null);
-          if(user){
-            await ensureUserProfile(user);
-
-            // 사용자 표시이름을 users 컬렉션에서 보강 로드 — ★
-            try{ // ★
-              const { doc, getDoc } = window.__fb_api; // ★
-              const snap = await getDoc(doc(window.__fb.db, 'users', user.uid)); // ★
-              const d = snap.data()||{}; // ★
-              currentUser = { // ★
-                uid: user.uid,
-                name: (d.displayName || user.displayName || (user.email? user.email.split('@')[0]:'사용자')), // ★
-                role: (d.role || (ADMIN_EMAILS.has(user.email)? 'admin':'user')) // ★
-              };
-            }catch(_){ // 실패 시 기본값 // ★
-              currentUser = {
-                uid: user.uid,
-                name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
-                role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
-              };
-            }
-
-            setHeaderImmediate();   // 로그인 즉시 헤더 표시 — ★
-            await postLoginUI();    // ▶ 로그인 화면 → 메인 화면 전환
-          }else{
-            currentUser = null;
-            document.getElementById('mainPanel').style.display='none';
-            document.getElementById('loginPanel').style.display='block';
-            document.getElementById('logoutBtn').style.display='none';
-            await renderRanks();
-            await updateHeaderUser();   // ▶ 헤더(사용자/순위) 갱신
-          }
-        });
+(function watchAuth(){
+  if(!window.__cloudReady) return;
+  const { onAuthStateChanged } = window.__fb_api;
+  onAuthStateChanged(window.__fb.auth, async (user)=>{
+    if(user){
+      await ensureUserProfile(user);
+      currentUser = {
+        uid: user.uid,
+        name: user.displayName || (user.email ? user.email.split('@')[0] : '사용자'),
+        role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
       };
-      bind();
-      const tm = setInterval(()=>{ if(!bound) bind(); else clearInterval(tm); }, 150);
-      window.addEventListener('load', bind);
-    })();
+      await postLoginUI();  // ▶ 로그인 화면 → 메인 화면 전환
+    }else{
+      currentUser = null;
+      document.getElementById('mainPanel').style.display='none';
+      document.getElementById('loginPanel').style.display='block';
+      document.getElementById('logoutBtn').style.display='none';
+      await renderRanks();
+      await updateHeaderUser();
+    }
+  });
+})();
+
+
 
     /* ================= 진행도 초기화 ================= */
     document.getElementById('resetProgress').onclick = async ()=>{
@@ -1048,3 +1024,4 @@
   </script>
 </body>
 </html>
+
