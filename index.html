@@ -278,11 +278,17 @@
         const snap = await getDocs(window.__fb.colUsers());
         snap.forEach(docSnap=>{
           const d=docSnap.data()||{};
-          map.set(docSnap.id, { displayName: d.displayName||'사용자', role: d.role||'user' });
+    -     map.set(docSnap.id, { displayName: d.displayName||'사용자', role: d.role||'user' });
+    +     map.set(docSnap.id, {
+    +       displayName: d.displayName || '',
+    +       role: d.role || 'user',
+    +       email: d.email || ''        // ← 표시이름 미기록시 이메일 앞부분 사용
+    +     });
         });
       }catch(e){ console.warn('[loadUsersMap] fail', e); }
       return map;
     }
+
 
     /* ================= 데이터 로드/저장 (Cloud-First) ================= */
     async function loadShared(){
@@ -385,19 +391,21 @@
       const usersMap = await loadUsersMap();
       const total = raw.length || 1;
 
-      const rows = Object.keys(progress)
-        .map(uid=>{
-          const learned = (progress[uid]?.learnedIds || []).length;
-          const rate = ((learned / total) * 100).toFixed(1);
-          const info = usersMap.get(uid) || { 
-          displayName: (uid.includes('@') ? uid.split('@')[0] : uid), 
-          role: 'user' 
-        };
+    const rows = Object.keys(progress)
+      .map(uid=>{
+        const learned = (progress[uid]?.learnedIds || []).length;
+        const rate = ((learned / total) * 100).toFixed(1);
+    -   const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
+    -   return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
+    +   const info = usersMap.get(uid) || {};
+    +   const name =
+    +     (info.displayName && info.displayName.trim()) ||
+    +     (info.email ? info.email.split('@')[0] : '사용자'); // ← 표시이름 없으면 이메일 앞부분
+    +   return { uid, name, role: info.role || 'user', learned, rate };
+      })
+      .filter(r=> r.role !== 'admin')
+      .sort((a,b)=> b.learned - a.learned);
 
-          return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
-        })
-        .filter(r=> r.role !== 'admin')
-        .sort((a,b)=> b.learned - a.learned);
 
       const html = '<h3>학습자 순위</h3>' + (
         rows.length
@@ -1046,6 +1054,7 @@
   </script>
 </body>
 </html>
+
 
 
 
