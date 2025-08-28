@@ -645,32 +645,29 @@
       }
     };
 
-//-- ================= 인증 상태 변화 핸들러 (원래 버전으로 복구) =================
-
-(function watchAuth(){
-  if(!window.__cloudReady) return;
-  const { onAuthStateChanged } = window.__fb_api;
-  onAuthStateChanged(window.__fb.auth, async (user)=>{
-    if(user){
-      await ensureUserProfile(user);
-      currentUser = {
-        uid: user.uid,
-        name: user.displayName || (user.email ? user.email.split('@')[0] : '사용자'),
-        role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
-      };
-      await postLoginUI();  // ▶ 로그인 화면 → 메인 화면 전환
-    }else{
-      currentUser = null;
-      document.getElementById('mainPanel').style.display='none';
-      document.getElementById('loginPanel').style.display='block';
-      document.getElementById('logoutBtn').style.display='none';
-      await renderRanks();
-      await updateHeaderUser();
-    }
-  });
-})();
-
-
+    /*================= 인증 상태 변화 핸들러 (원래 버전으로 복구) =================*/
+    (function watchAuth(){
+      if(!window.__cloudReady) return;
+      const { onAuthStateChanged } = window.__fb_api;
+      onAuthStateChanged(window.__fb.auth, async (user)=>{
+        if(user){
+          await ensureUserProfile(user);
+          currentUser = {
+            uid: user.uid,
+            name: user.displayName || (user.email ? user.email.split('@')[0] : '사용자'),
+            role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
+          };
+          await postLoginUI();  // ▶ 로그인 화면 → 메인 화면 전환
+        }else{
+          currentUser = null;
+          document.getElementById('mainPanel').style.display='none';
+          document.getElementById('loginPanel').style.display='block';
+          document.getElementById('logoutBtn').style.display='none';
+          await renderRanks();
+          await updateHeaderUser();
+        }
+      });
+    })();
 
     /* ================= 진행도 초기화 ================= */
     document.getElementById('resetProgress').onclick = async ()=>{
@@ -1024,5 +1021,6 @@
   </script>
 </body>
 </html>
+
 
 
