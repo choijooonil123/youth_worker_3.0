@@ -215,7 +215,7 @@
       const v = (s??'').toString().trim();
       return v.length ? v : '기타';
     };
-    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;","">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
     function showError(msg){
@@ -432,6 +432,16 @@
       lo.style.display    = 'inline-block';
     }
 
+    /* ===== 표시이름을 즉시 헤더에 보여주기(대기 없이) — ★ 추가 ===== */
+    function setHeaderImmediate(){  // ★
+      if(!currentUser) return;
+      const userEl = document.getElementById('headerUser');
+      const lo     = document.getElementById('logoutBtn');
+      userEl.textContent = `사용자: ${currentUser.name}`;
+      userEl.style.display = 'inline-block';
+      lo.style.display = 'inline-block';
+    }
+
     /* ================= 베이스 데이터 ================= */
     const FALLBACK = [
       { subject:'샘플과목', question:'청소년상담에서 라포의 핵심은?', answers:['진정성, 공감, 존중을 통해 신뢰관계 형성'], active:0, extraInfo:'신뢰 형성을 위해 상담자의 진정성·공감·무조건적 존중이 중요합니다.', followups:[{q:'현장에서 적용 사례?',a:'상황-행동-결과(SAR)로 간단히 설명.'}] },
@@ -635,7 +645,7 @@
       }
     };
 
-    /* ===== 인증 상태 변화 핸들러 (보강: 초기화 지연 대응) ===== */
+    /* ===== 인증 상태 변화 핸들러 (보강) ===== */
     (function watchAuthRobust(){
       let bound = false;
       const bind = ()=>{
@@ -650,12 +660,27 @@
           console.log('[AUTH] state changed =>', user?.uid || null);
           if(user){
             await ensureUserProfile(user);
-            currentUser = {
-              uid: user.uid,
-              name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
-              role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
-            };
-            await postLoginUI();        // ▶ 로그인 화면 → 메인 화면 전환
+
+            // 사용자 표시이름을 users 컬렉션에서 보강 로드 — ★
+            try{ // ★
+              const { doc, getDoc } = window.__fb_api; // ★
+              const snap = await getDoc(doc(window.__fb.db, 'users', user.uid)); // ★
+              const d = snap.data()||{}; // ★
+              currentUser = { // ★
+                uid: user.uid,
+                name: (d.displayName || user.displayName || (user.email? user.email.split('@')[0]:'사용자')), // ★
+                role: (d.role || (ADMIN_EMAILS.has(user.email)? 'admin':'user')) // ★
+              };
+            }catch(_){ // 실패 시 기본값 // ★
+              currentUser = {
+                uid: user.uid,
+                name: user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
+                role: ADMIN_EMAILS.has(user.email) ? 'admin' : 'user'
+              };
+            }
+
+            setHeaderImmediate();   // 로그인 즉시 헤더 표시 — ★
+            await postLoginUI();    // ▶ 로그인 화면 → 메인 화면 전환
           }else{
             currentUser = null;
             document.getElementById('mainPanel').style.display='none';
@@ -928,8 +953,8 @@
       await bootstrap();
     };
 
-    /* ================= 내보내기/가져오기 (추가) ================= */
-    (function(){
+    /* ================= 내보내기/가져오기 (바인딩 안정화) — ★ ================= */
+    document.addEventListener('DOMContentLoaded', ()=>{   // ★ DOM 준비 후 안전하게 바인딩
       const exportBtn = document.getElementById('exportBtn');
       const importBtn = document.getElementById('importBtn');
       const importFile = document.getElementById('importFile');
@@ -988,16 +1013,17 @@
         }
       }
 
-      if(exportBtn) exportBtn.addEventListener('click', exportAll);
-      if(importBtn && importFile){
+      if(exportBtn && !exportBtn.__bound){ exportBtn.addEventListener('click', exportAll); exportBtn.__bound=true; } // ★ 중복바인딩 방지
+      if(importBtn && importFile && !importBtn.__bound){
         importBtn.addEventListener('click', ()=> importFile.click());
         importFile.addEventListener('change', (e)=>{
           const f = e.target.files && e.target.files[0];
           if(f) importAll(f);
           e.target.value = '';
         });
+        importBtn.__bound=true;
       }
-    })();
+    });
 
     /* ================= 부트스트랩 ================= */
     async function bootstrap(){
