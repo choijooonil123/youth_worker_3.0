@@ -155,7 +155,7 @@
     </div>
   </div>
 
-  <!-- 질문 모달 등 이하 기존 로직 유지 -->
+  <!-- 질문 모달 -->
   <dialog id="qd">
     <div class="dlg">
       <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -215,7 +215,7 @@
       const v = (s??'').toString().trim();
       return v.length ? v : '기타';
     };
-    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;"," >":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
     function showError(msg){
@@ -504,19 +504,17 @@
       document.getElementById('countLearned').textContent = `과목별 : 습득수 ${subjectLearned}`;
     }
 
-    /* ================= 과목/리스트 (★수정된 부분) ================= */
+    /* ================= 과목/리스트 ================= */
     function subjects(){
-      // 모든 문항에서 과목을 뽑되, 공백/빈값/undefined/null은 '기타'로 통일
       const list = raw.map(q => normSubj(q.subject));
-      // 중복 제거 + 정렬
       return Array.from(new Set(list)).sort((a,b)=> a.localeCompare(b));
     }
 
     function initSubjectSelect(){
       const sel = document.getElementById('subjectSelect');
-      const prev = sel.value;                       // 기존 선택 유지 시도
+      const prev = sel.value;
       const subs = subjects();
-      sel.innerHTML = subs.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+      sel.innerHTML = subs.map(s=>`<option value="${s}">${s}</option>`).join('');
       sel.value = subs.includes(prev) ? prev : (subs[0] || '기타');
       sel.onchange = async ()=>{
         renderBySubject(currentSubject());
@@ -572,7 +570,8 @@
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
         await signInWithEmailAndPassword(window.__fb.auth, email, pass);
-        // onAuthStateChanged에서 후속 처리
+        /* ✅ 최소 수정: 로그인 성공 즉시 화면 전환 보장 */
+        await postLoginUI();
       }catch(err){
         const code = err?.code || '';
         const map = {
@@ -716,7 +715,7 @@
       window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if(!window.SpeechRecognition){ alert('이 브라우저는 음성 인식을 지원하지 않습니다.'); return; }
       recognition=new SpeechRecognition();
-      recognition.lang='ko-KR'; recognition.continuous=true; recognition.interimResults=true;
+      recognition.lang='ко-KR'; recognition.continuous=true; recognition.interimResults=true;
       let finalTranscript='';
       recognition.onresult=(event)=>{
         let interim='';
