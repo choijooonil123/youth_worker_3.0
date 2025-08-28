@@ -215,7 +215,7 @@
       const v = (s??'').toString().trim();
       return v.length ? v : '기타';
     };
-    const esc = s => String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;","">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+    const esc = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
     const qKey = q => `${normSubj(q.subject)}::${q.question}`;
 
     function showError(msg){
@@ -1021,6 +1021,7 @@
   </script>
 </body>
 </html>
+
 
 
 
