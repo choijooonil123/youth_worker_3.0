@@ -580,6 +580,16 @@
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
         await signInWithEmailAndPassword(window.__fb.auth, email, pass);
+        
+        // 로그인 성공 후 안전망: 훅이 늦게 오거나 누락될 때 즉시 전환
+        const u = window.__fb.auth.currentUser;
+        if (u) {
+          currentUser = { uid: u.uid, name: u.displayName || (u.email ? u.email.split('@')[0] : '사용자'), role: ADMIN_EMAILS.has(u.email) ? 'admin' : 'user' };
+          await ensureUserProfile(u);
+          await postLoginUI();
+        }
+
+        
         // onAuthStateChanged에서 후속 처리
       }catch(err){
         const code = err?.code || '';
@@ -1021,6 +1031,7 @@
   </script>
 </body>
 </html>
+
 
 
 
