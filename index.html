@@ -445,16 +445,24 @@
         return Array.isArray(j)&&j.length? j : FALLBACK;
       }catch{ return FALLBACK; }
     }
-    function standardize(base){
-      return base.map(x=>({
-        subject: normSubj(x.subject),
-        question: x.question,
-        answers: Array.isArray(x.answers)? x.answers.filter(Boolean) : [(x.answer||'')].filter(Boolean),
-        active: (typeof x.active==='number'? x.active:0),
-        extraInfo: (typeof x.extraInfo==='string')? x.extraInfo : '',
-        followups: Array.isArray(x.followups)? x.followups.filter(f=>f&&f.q&&f.a) : []
-      }));
-    }
+   
+  function standardize(base){
+    return base.map(x=>({
+      // ★ 변경: 과목 키 다중 지원
+      subject: normSubj(
+        x.subject ??
+        x.subj ??
+        x.category ??
+        x['과목'] ??
+        ''
+      ),
+      question: x.question,
+      answers: Array.isArray(x.answers)? x.answers.filter(Boolean) : [(x.answer||'')].filter(Boolean),
+      active: (typeof x.active==='number'? x.active:0),
+      extraInfo: (typeof x.extraInfo==='string')? x.extraInfo : '',
+      followups: Array.isArray(x.followups)? x.followups.filter(f=>f&&f.q&&f.a) : []
+    }));
+  } 
     async function mergeWithShared(baseStd){
       const map=new Map();
       baseStd.forEach(q=> map.set(qKey(q), {...q}) );
@@ -940,3 +948,4 @@
   </script>
 </body>
 </html>
+
