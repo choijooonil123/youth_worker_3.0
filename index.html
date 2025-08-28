@@ -928,6 +928,77 @@
       await bootstrap();
     };
 
+    /* ================= 내보내기/가져오기 (추가) ================= */
+    (function(){
+      const exportBtn = document.getElementById('exportBtn');
+      const importBtn = document.getElementById('importBtn');
+      const importFile = document.getElementById('importFile');
+
+      function download(filename, text){
+        const blob = new Blob([text], {type: 'application/json;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        URL.revokeObjectURL(url);
+        a.remove();
+      }
+
+      async function exportAll(){
+        try{
+          const shared = await loadShared();
+          const progress = await loadProgress();
+          const payload = {
+            version: 3,
+            exportedAt: new Date().toISOString(),
+            shared,
+            progress
+          };
+          download('youth-interview-backup.json', JSON.stringify(payload, null, 2));
+          alert('내보내기가 완료되었습니다.');
+        }catch(e){
+          alert('내보내기 실패: ' + (e?.message || e));
+        }
+      }
+
+      async function importAll(file){
+        try{
+          const text = await file.text();
+          const obj = JSON.parse(text);
+          if(typeof obj !== 'object' || obj === null) throw new Error('JSON 형식이 아닙니다.');
+          if(!('shared' in obj) || !('progress' in obj)) throw new Error('shared/progress 키가 없습니다.');
+          if(!Array.isArray(obj.shared)) throw new Error('shared는 배열이어야 합니다.');
+          if(typeof obj.progress !== 'object') throw new Error('progress는 객체여야 합니다.');
+          if(!confirm('현재 데이터가 덮어쓰기/병합됩니다. 진행할까요?')) return;
+
+          await saveShared(obj.shared);
+          const names = Object.keys(obj.progress||{});
+          for(const key of names){
+            const learned = Array.from(new Set((obj.progress[key]?.learnedIds)||[]));
+            await saveProgressForUser(key, learned);
+          }
+
+          await bootstrap();
+          alert('가져오기가 완료되었습니다.');
+        }catch(e){
+          console.error(e);
+          alert('가져오기 실패: ' + (e?.message||e));
+        }
+      }
+
+      if(exportBtn) exportBtn.addEventListener('click', exportAll);
+      if(importBtn && importFile){
+        importBtn.addEventListener('click', ()=> importFile.click());
+        importFile.addEventListener('change', (e)=>{
+          const f = e.target.files && e.target.files[0];
+          if(f) importAll(f);
+          e.target.value = '';
+        });
+      }
+    })();
+
     /* ================= 부트스트랩 ================= */
     async function bootstrap(){
       const base=await loadBase();
