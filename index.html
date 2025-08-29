@@ -257,12 +257,16 @@
         const fallbackName = user.displayName || (user.email ? user.email.split('@')[0] : '사용자');
         if(!snap.exists()){
           await setDoc(ref, {
+            uid:user.uid, email:user.email||'',
+            displayName:user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
             uid: user.uid, email: user.email||'',
             displayName: fallbackName,
             role, createdAt: new Date().toISOString()
           });
         }else{
           const d = snap.data()||{};
+          if(d.role!==role || d.displayName!==(user.displayName||d.displayName)){
+            await setDoc(ref, { role, displayName:user.displayName||d.displayName }, { merge:true });
           if(d.role!==role || d.displayName!==fallbackName){
             await setDoc(ref, { role, displayName: fallbackName }, { merge:true });
           }
@@ -278,17 +282,11 @@
         const snap = await getDocs(window.__fb.colUsers());
         snap.forEach(docSnap=>{
           const d=docSnap.data()||{};
-    -     map.set(docSnap.id, { displayName: d.displayName||'사용자', role: d.role||'user' });
-    +     map.set(docSnap.id, {
-    +       displayName: d.displayName || '',
-    +       role: d.role || 'user',
-    +       email: d.email || ''        // ← 표시이름 미기록시 이메일 앞부분 사용
-    +     });
+          map.set(docSnap.id, { displayName: d.displayName||'사용자', role: d.role||'user' });
         });
       }catch(e){ console.warn('[loadUsersMap] fail', e); }
       return map;
     }
-
 
     /* ================= 데이터 로드/저장 (Cloud-First) ================= */
     async function loadShared(){
@@ -391,21 +389,20 @@
       const usersMap = await loadUsersMap();
       const total = raw.length || 1;
 
-    const rows = Object.keys(progress)
-      .map(uid=>{
-        const learned = (progress[uid]?.learnedIds || []).length;
-        const rate = ((learned / total) * 100).toFixed(1);
-    -   const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
-    -   return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
-    +   const info = usersMap.get(uid) || {};
-    +   const name =
-    +     (info.displayName && info.displayName.trim()) ||
-    +     (info.email ? info.email.split('@')[0] : '사용자'); // ← 표시이름 없으면 이메일 앞부분
-    +   return { uid, name, role: info.role || 'user', learned, rate };
-      })
-      .filter(r=> r.role !== 'admin')
-      .sort((a,b)=> b.learned - a.learned);
+      const rows = Object.keys(progress)
+        .map(uid=>{
+          const learned = (progress[uid]?.learnedIds || []).length;
+          const rate = ((learned / total) * 100).toFixed(1);
+          const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
+          const info = usersMap.get(uid) || { 
+          displayName: (uid.includes('@') ? uid.split('@')[0] : uid), 
+          role: 'user' 
+        };
 
+          return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
+        })
+        .filter(r=> r.role !== 'admin')
+        .sort((a,b)=> b.learned - a.learned);
 
       const html = '<h3>학습자 순위</h3>' + (
         rows.length
@@ -594,7 +591,7 @@
         if(!email||!pass){ showError('이메일과 비밀번호를 입력하세요.'); return; }
         const { signInWithEmailAndPassword } = window.__fb_api;
         await signInWithEmailAndPassword(window.__fb.auth, email, pass);
-        
+
         // 로그인 성공 후 안전망: 훅이 늦게 오거나 누락될 때 즉시 전환
         const u = window.__fb.auth.currentUser;
         if (u) {
@@ -603,7 +600,7 @@
           await postLoginUI();
         }
 
-        
+
         // onAuthStateChanged에서 후속 처리
       }catch(err){
         const code = err?.code || '';
@@ -1054,11 +1051,3 @@
   </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
