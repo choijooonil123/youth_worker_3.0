@@ -254,26 +254,20 @@
         const ref = doc(db, 'users', user.uid);
         const snap = await getDoc(ref);
         const role = ADMIN_EMAILS.has(user.email) ? 'admin' : 'user';
-        const fallbackName = user.displayName || (user.email ? user.email.split('@')[0] : '사용자');
         if(!snap.exists()){
           await setDoc(ref, {
             uid:user.uid, email:user.email||'',
             displayName:user.displayName || (user.email? user.email.split('@')[0] : '사용자'),
-            uid: user.uid, email: user.email||'',
-            displayName: fallbackName,
             role, createdAt: new Date().toISOString()
           });
         }else{
           const d = snap.data()||{};
           if(d.role!==role || d.displayName!==(user.displayName||d.displayName)){
             await setDoc(ref, { role, displayName:user.displayName||d.displayName }, { merge:true });
-          if(d.role!==role || d.displayName!==fallbackName){
-            await setDoc(ref, { role, displayName: fallbackName }, { merge:true });
           }
         }
       }catch(e){ console.warn('ensureUserProfile fail', e); }
     }
-
     async function loadUsersMap(){
       const map = new Map(); // uid -> {displayName, role}
       try{
@@ -394,11 +388,6 @@
           const learned = (progress[uid]?.learnedIds || []).length;
           const rate = ((learned / total) * 100).toFixed(1);
           const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
-          const info = usersMap.get(uid) || { 
-          displayName: (uid.includes('@') ? uid.split('@')[0] : uid), 
-          role: 'user' 
-        };
-
           return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
         })
         .filter(r=> r.role !== 'admin')
