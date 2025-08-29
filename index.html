@@ -387,8 +387,10 @@
         .map(uid=>{
           const learned = (progress[uid]?.learnedIds || []).length;
           const rate = ((learned / total) * 100).toFixed(1);
-          const info = usersMap.get(uid) || { displayName: uid, role: 'user' };
-          return { uid, name: info.displayName || uid, role: info.role || 'user', learned, rate };
+
+          // ✅ 표시이름 우선, 없으면 '사용자' (UID 노출 방지)
+          const info = usersMap.get(uid) || { displayName: '사용자', role: 'user' };
+          return { uid, name: info.displayName || '사용자', role: info.role || 'user', learned, rate };
         })
         .filter(r=> r.role !== 'admin')
         .sort((a,b)=> b.learned - a.learned);
@@ -433,7 +435,7 @@
     }
 
     /* ===== 표시이름을 즉시 헤더에 보여주기(대기 없이) — ★ 추가 ===== */
-    function setHeaderImmediate(){  // ★
+    function setHeaderImmediate(){
       if(!currentUser) return;
       const userEl = document.getElementById('headerUser');
       const lo     = document.getElementById('logoutBtn');
@@ -588,9 +590,6 @@
           await ensureUserProfile(u);
           await postLoginUI();
         }
-
-
-        // onAuthStateChanged에서 후속 처리
       }catch(err){
         const code = err?.code || '';
         const map = {
@@ -652,9 +651,16 @@
         await signOut(window.__fb.auth);
       }catch(e){
         console.warn('[logout] fail', e);
+      }finally{
+        // ✅ 훅 지연/누락 대비: 즉시 UI 원복 (화면전환 보장)
+        currentUser = null;
+        document.getElementById('mainPanel').style.display='none';
+        document.getElementById('loginPanel').style.display='block';
+        document.getElementById('logoutBtn').style.display='none';
+        document.getElementById('headerUser').style.display='none';
+        document.getElementById('headerRank').style.display='none';
       }
     };
-
 
     /*================= 인증 상태 변화 핸들러 (원래 버전으로 복구) =================*/
     (function watchAuth(){
@@ -946,7 +952,7 @@
     };
 
     /* ================= 내보내기/가져오기 (바인딩 안정화) — ★ ================= */
-    document.addEventListener('DOMContentLoaded', ()=>{   // ★ DOM 준비 후 안전하게 바인딩
+    document.addEventListener('DOMContentLoaded', ()=>{
       const exportBtn = document.getElementById('exportBtn');
       const importBtn = document.getElementById('importBtn');
       const importFile = document.getElementById('importFile');
@@ -1005,7 +1011,7 @@
         }
       }
 
-      if(exportBtn && !exportBtn.__bound){ exportBtn.addEventListener('click', exportAll); exportBtn.__bound=true; } // ★ 중복바인딩 방지
+      if(exportBtn && !exportBtn.__bound){ exportBtn.addEventListener('click', exportAll); exportBtn.__bound=true; }
       if(importBtn && importFile && !importBtn.__bound){
         importBtn.addEventListener('click', ()=> importFile.click());
         importFile.addEventListener('change', (e)=>{
@@ -1039,4 +1045,4 @@
     })();
   </script>
 </body>
-</html>
+  </html>
